@@ -13,7 +13,6 @@ from fastapi.responses import HTMLResponse
 from act.config.settings import Settings
 from act.logging_setup import setup_logging
 from act.orchestrator.cycle import now, run_cycle
-from act.paper.ledger import PaperLedger
 
 STARTED = time.monotonic()
 LATEST = None
@@ -34,27 +33,8 @@ async def research_loop():
                 "markets": [], "discoveries": [], "assessments": {},
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
-        steps = [s["step"] for s in result["steps"]]
-        names = ["CoinGecko", "GeckoTerminal", "RugCheck"]
-        attempted = [any(n in s for s in steps) for n in names]
-        result["collectors"] = {}
-        for i, name in enumerate(names):
-            if not attempted[i]:
-                outcome = {"status": "skipped", "reason": "Prior collector failed"}
-            elif result["status"] == "failed" and not any(attempted[i + 1:]):
-                outcome = {"status": "failed", "error": result.get("error")}
-            else:
-                outcome = {"status": "success"}
-            result["collectors"][name] = outcome
+        for name, outcome in result.get("collectors", {}).items():
             LOG.info("COLLECTOR %s %s", name, json.dumps(outcome))
-        result["paper_only"] = True
-        try:
-            ledger = PaperLedger(settings.ledger_path, fee_pct=settings.fee_pct,
-                                 slippage_pct=settings.slippage_pct)
-            prices = {m["symbol"]: m["price_usd"] for m in result["markets"]}
-            result["paper_account"] = ledger.account_state(prices).model_dump(mode="json")
-        except Exception as exc:
-            result["paper_account"] = {"error": str(exc)}
         LATEST = result
         try:
             settings.report_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +65,8 @@ app = FastAPI(title="Autonomous Crypto Trader", lifespan=lifespan)
 def health():
     return {"status": "awake", "uptime_seconds": round(time.monotonic() - STARTED, 2),
             "paper_only": True,
-            "last_cycle_timestamp": LATEST.get("finished_at") if LATEST else None}
+            "last_cycle_timestamp": LATEST.get("finished_at") if LATEST else None,
+            "persistence": LATEST.get("persistence") if LATEST else None}
 
 
 @app.get("/status")
@@ -125,7 +106,8 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere}}.scroll{{overflow:auto}}a{{col
 </style></head><body><main><p class="badge">SIMULATED - PAPER TRADING ONLY</p>
 <h1>Autonomous Crypto Trader</h1><p>Read-only live market research. No trades executed.</p>
 <p>System: {safe(result.get("status", "Waiting for first cycle"))}<br>
-Last cycle: {safe(result.get("finished_at", "Not completed yet"))}</p>
+Last cycle: {safe(result.get("finished_at", "Not completed yet"))}<br>
+Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <div class="cards">{cards}</div><section><h2>Top new Solana pools</h2><div class="scroll">
 <table><thead><tr><th>Name</th><th>Pool</th><th>Price USD</th><th>Liquidity USD</th></tr></thead>
 <tbody>{rows}</tbody></table></div></section><section><h2>Paper account</h2>
@@ -134,5 +116,5 @@ Last cycle: {safe(result.get("finished_at", "Not completed yet"))}</p>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
 <section><h2>Security check outcomes</h2><pre>{safe(json.dumps(result.get("assessments", {}), indent=2))}</pre>
 <p>Missing security information is unknown, never safe.</p></section>
-<p>Cycles run every 20 minutes while awake. Free hosting may sleep; memory and local logs are ephemeral.
+<p>Cycles run every 20 minutes while awake. Free hosting may sleep; local logs are ephemeral; configured Supabase storage survives redeploys.
 <a href="/health">Health JSON</a> · <a href="/status">Full cycle JSON</a></p></main></body></html>'''
