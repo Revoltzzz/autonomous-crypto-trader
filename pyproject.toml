@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = ["httpx>=0.27,<1", "pydantic>=2.7,<3", "pydantic-settings>=2.2,<3"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10", "ruff>=0.8,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.8,<1", "fastapi>=0.115,<1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
