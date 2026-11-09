@@ -28,26 +28,26 @@ def string_at(value, path):
 
 
 class GeckoTerminalCollector(BaseCollector):
-    async def _payload(self):
+    async def _payload(self, *, url=URL, params=None):
         # Free API limits can be shared by an entire hosting egress IP. A burst
         # of 1/2/4-second retries does not let a minute-scale limit recover.
         # Request-local headers must not mutate a client shared with collectors.
         for attempt in range(self.retries + 1):
             try:
                 response = await self.client.get(
-                    URL, params={"include": "base_token"}, headers=HEADERS,
+                    url, params=params if params is not None else {"include": "base_token"}, headers=HEADERS,
                     timeout=self.timeout,
                 )
             except httpx.TransportError as exc:
                 if attempt == self.retries:
-                    raise CollectorError(f"GeckoTerminal transport failure at {URL}") from exc
+                    raise CollectorError(f"GeckoTerminal transport failure at {url}") from exc
                 await self.sleep(2 ** attempt)
                 continue
             status = response.status_code
             if status == 429 or status >= 500:
                 if attempt == self.retries:
                     raise CollectorError(
-                        f"GeckoTerminal HTTP {status} at {URL}; retries exhausted; "
+                        f"GeckoTerminal HTTP {status} at {url}; retries exhausted; "
                         "no data fabricated"
                     )
                 floor = 30 * (2 ** attempt) if status == 429 else 2 ** attempt
@@ -58,14 +58,14 @@ class GeckoTerminalCollector(BaseCollector):
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
-                raise CollectorError(f"GeckoTerminal HTTP {status} at {URL}") from exc
+                raise CollectorError(f"GeckoTerminal HTTP {status} at {url}") from exc
             try:
                 return response.json()
             except ValueError as exc:
                 raise CollectorError(
-                    f"GeckoTerminal expected JSON object at {URL}; received invalid JSON"
+                    f"GeckoTerminal expected JSON object at {url}; received invalid JSON"
                 ) from exc
-        raise CollectorError(f"GeckoTerminal no response at {URL}")
+        raise CollectorError(f"GeckoTerminal no response at {url}")
 
     async def fetch(self) -> list[TokenDiscovery]:
         payload = await self._payload()
