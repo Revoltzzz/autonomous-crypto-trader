@@ -104,7 +104,7 @@ article{{flex:1}}strong{{font-size:24px}}table{{width:100%;border-collapse:colla
 td,th{{text-align:left;border-bottom:1px solid #334155;padding:10px;overflow-wrap:anywhere}}
 pre{{white-space:pre-wrap;overflow-wrap:anywhere}}.scroll{{overflow:auto}}a{{color:#7dd3fc}}
 </style></head><body><main><p class="badge">SIMULATED - PAPER TRADING ONLY</p>
-<h1>Autonomous Crypto Trader</h1><p>Read-only live market research. No trades executed.</p>
+<h1>Autonomous Crypto Trader</h1><p>Live research and risk-gated simulated paper execution. No real trades.</p>
 <p>System: {safe(result.get("status", "Waiting for first cycle"))}<br>
 Last cycle: {safe(result.get("finished_at", "Not completed yet"))}<br>
 Persistence: {safe(result.get("persistence", "Waiting"))}</p>
@@ -113,6 +113,14 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <tbody>{rows}</tbody></table></div></section><section><h2>Paper account</h2>
 <p>Equity USD: {safe(account.get("equity", "Unavailable"))}</p>
 <pre>{safe(json.dumps(account, indent=2))}</pre></section>
+<section id="decisions"><h2>Candidate decisions (every candidate)</h2>
+<p>SIMULATED - PAPER TRADING ONLY</p>
+<pre>{safe(json.dumps(result.get("decision_counts", {}), indent=2))}</pre>
+<pre>{safe(json.dumps(result.get("decisions", []), indent=2))}</pre></section>
+<section id="positions"><h2>Open paper positions</h2>
+<pre>{safe(json.dumps(result.get("paper_positions", []), indent=2))}</pre></section>
+<section id="trades"><h2>Paper trade history (including losses)</h2>
+<pre>{safe(json.dumps(result.get("paper_trades", []), indent=2))}</pre></section>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
 <section><h2>Security check outcomes</h2><pre>{safe(json.dumps(result.get("assessments", {}), indent=2))}</pre>
 <p>Missing security information is unknown, never safe.</p></section>
