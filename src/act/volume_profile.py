@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from math import isfinite
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from act.collectors.base import CollectorError
@@ -20,7 +20,14 @@ class VolumeProfileSettings(BaseSettings):
     min_candles: int = Field(default=12, ge=1, le=1000)
     bins: int = Field(default=24, ge=1, le=200)
     # Mandatory safety invariant: an env override cannot bypass missing OHLCV.
-    required_for_buy: Literal[True] = True
+    required_for_buy: bool = True
+
+    @field_validator("required_for_buy")
+    @classmethod
+    def require_profile(cls, value):
+        if not value:
+            raise ValueError("Volume profile is mandatory for BUY; false is not permitted")
+        return value
 
 
 @dataclass(frozen=True)
@@ -146,7 +153,8 @@ class VolumeProfileFetcher(GeckoTerminalCollector):
                 payload = await self._payload(url=url, params={"aggregate": aggregate,
                     "limit": 100, "currency": "usd", "token": "base",
                     "include_empty_intervals": "false"})
-                rows = validate_rows(payload["data"]["attributes"]["ohlcv_list"])
+                raw_rows = payload["data"]["attributes"]["ohlcv_list"]
+                rows = [] if raw_rows == [] else validate_rows(raw_rows)
                 # Only completed candles; never invent the current candle's final volume.
                 end = at.timestamp()
                 if any(r[0] > end for r in rows):
