@@ -97,9 +97,9 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
         nominal_notional = risk_budget / cfg.stop_fraction
         entry_cost = entry * (1 + slippage) * (1 + fee)
         stop_proceeds = stop * (1 - slippage) * (1 - fee)
-        # Nominal risk/stop sizing is reduced for costs, never relax the 1% gate.
         size = min(nominal_notional / entry, risk_budget / (entry_cost - stop_proceeds)) * (1 - 1e-10)
-        trade = TradeProposal(token=pool.mint_address, entry_price=entry, size=size,
+        trade = TradeProposal(token=pool.mint_address, pool_address=pool.pool_address,
+                              entry_price=entry, size=size,
                               stop_loss=stop, take_profit=target, strategy="screened-paper-v1",
                               reason="; ".join(evidence))
         gate = check_trade(trade, account, fee_pct=fee * 100, slippage_pct=slippage * 100)
@@ -122,12 +122,18 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
                           reasoning="; ".join(evidence + failures), proposal=proposal, created_at=at)
 
 
-def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None, at=None):
+def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None, at=None,
+                 position_prices=None):
     cfg = config or StrategySettings()
     at = at or datetime.now(timezone.utc)
     executor = PaperExecutor(ledger, settings)
-    # Discovered mint quotes only; do not fabricate marks for old positions.
     prices = {p.mint_address: p.price_usd for p in pools if p.price_usd is not None}
+    if position_prices is not None:
+        # Dedicated position refresh is authoritative, including a failed refresh.
+        # A discovery row must not silently erase the stale flag for an old holding.
+        for position in ledger.positions.values():
+            prices.pop(position.token, None)
+        prices.update(position_prices)
     missing_marks = sorted({p.token for p in ledger.positions.values()} - prices.keys())
     decisions = []
     for pool in pools:
