@@ -88,3 +88,36 @@ Nominal notional = (current equity * 1%) / stop fraction; units = notional / quo
 Apply migrations 001, 002, then `supabase/migrations/003_decisions.sql` in the Supabase SQL editor. 003 adds private RLS-enabled paper_decisions with no public policies; anon/authenticated privileges are revoked. The existing single `persist_paper_cycle` RPC atomically persists cycle, decisions and ledger. Existing ledger history must remain a prefix of each new history; paper_trades uses conflict DO NOTHING, never overwriting losses. Only backend service role may call it. Never put secrets in SQL, source or chat.
 
 The dashboard and /status show all latest-cycle decisions, proposals, equity, open paper positions and all closed paper trades. PAPER_DECISION, PERSISTED_CYCLE and CYCLE_RESULT log lines provide audit evidence. Offline tests in tests/test_strategy.py use fixtures/temp ledgers, never network.
+
+## Volume profile confirmation (PAPER only)
+
+`act.volume_profile` computes a **candle-derived approximation**, not trade-by-trade volume-at-price or order flow. Equal-width price bins span the observed low/high. Each candle's USD volume is distributed uniformly over its high-low range by overlap with each bin. A flat candle contributes entirely to its containing bin (the top endpoint is clamped to the last bin). An all-flat history has a single price level. Nonfinite, inconsistent, duplicate-timestamp, empty or zero-total-volume data fails loudly.
+
+POC is the highest-volume bin's midpoint (ties choose the lower bin). Starting at POC, the contiguous value area expands one adjacent bin at a time toward the larger adjacent volume, ties downward, until at least the configured percentage is included. VAL/VAH are the outer edges; actual enclosed percentage may exceed the target and is recorded.
+
+**Entry:** all existing hard filters and risk gates remain unchanged. OHLCV is fetched only after every hard strategy filter passes and equity is available. BUY then requires current observed price **at or above VAH**, with VAL strictly below entry. Inside value area is rejected pending acceptance; below VAL is invalidation and rejected. No profile, exhausted retries, malformed/stale candles or insufficient history means REJECT, never BUY. Hard-filter rejects explicitly say profile not attempted. Profile evidence is retained in each eligible decision's existing proposal JSONB, including unavailable reasons; no new database columns/migration are required.
+
+**Stop/sizing:** stop is VAL unless farther than `STRATEGY_STOP_FRACTION` from entry, in which case the fraction cap is used and explicitly labeled (stop above VAL). Nominal sizing is 1% equity / fractional stop distance, then reduced for fees/slippage so estimated stop loss remains within the existing cost-inclusive 1% gate. Targets, concurrency, loss/drawdown gates and stale-quote protections are unchanged. Stops are not guaranteed fills: existing first-observing-cycle simulation fills still apply.
+
+### OHLCV contract and rate discipline
+
+Verified on 2026-11-09 using the public SOL/USDC pool `DJNtGuBGEQiUCWE8F981M2C3ZghZt2XLD8f2sQdZ6rsZ`:
+`https://api.geckoterminal.com/api/v2/networks/solana/pools/{pool_address}/ohlcv/minute?aggregate=15&limit=100&currency=usd&token=base&include_empty_intervals=false`.
+The path timeframe is **minute**, not `15m`; aggregate is 15 or 5. `data.attributes.ohlcv_list` contains newest-first `[timestamp, open, high, low, close, volume]` rows. The captured response has `data.type=ohlcv_request_response`, `meta.base` and `meta.quote` token metadata; no links were present. The exact 12-row real sample is pinned in `tests/test_volume_profile.py`. The sample succeeded without 429; no empirical rate limit threshold is claimed.
+
+Use 15m for older pools; pools under 24h use 5m directly. Too few completed 15m candles fall back to 5m. Request at most 100 rows, discard incomplete candles, reject future timestamps or latest completed candle older than three intervals, and require 12 completed candles by default. A per-cycle fetcher caches successes **and failures** by pool address. Existing GeckoTerminal bounded retries/429 Retry-After-aware backoff are reused; no extra OHLCV requests for hard-filter rejects. The cycle reports unique attempted pools, available/unavailable profiles and not-attempted candidates. Young pool history is limited/coarse, may contain gaps, and cannot establish profitable acceptance. No candles or marks are fabricated.
+
+### Volume-profile environment settings
+
+Pydantic `VolumeProfileSettings` reads these environment overrides (no secrets):
+
+| Setting | Default | Bounds / policy |
+|---|---|---|
+| `VOLUME_PROFILE_TIMEFRAME` | `15m` | `15m` or `5m` |
+| `VOLUME_PROFILE_FALLBACK_TIMEFRAME` | `5m` | `5m` |
+| `VOLUME_PROFILE_VALUE_AREA_PCT` | `70` | >0, <=100 |
+| `VOLUME_PROFILE_MIN_CANDLES` | `12` | 1..1000; API request limit is 100, so higher requirements fail closed |
+| `VOLUME_PROFILE_BINS` | `24` | 1..200 |
+| `VOLUME_PROFILE_REQUIRED_FOR_BUY` | `true` | Mandatory safety invariant: `false` is rejected, never a bypass |
+
+The read-only dashboard keeps **SIMULATED - PAPER TRADING ONLY** prominent and shows per-candidate POC/VAH/VAL, target/actual VA%, price position, candle count, timeframe and unavailable/not-attempted status. Synthetic hand-computed tests are explicitly offline fixtures, not live evidence.

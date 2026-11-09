@@ -114,10 +114,10 @@ def test_exit_frees_strategy_slot(tmp_path, monkeypatch):
         freeze_authority_revoked=True, top_holder_concentration_pct=12, source='offline')
     config = StrategySettings(max_open_positions=1)
     before, _ = run_strategy([pool], {'new': security}, ledger, settings,
-        cycle_id='before', config=config, position_prices={'mint': 110})
+        cycle_id='before', config=config, volume_profiles={'newpool': {'status': 'available', 'val': 1.7, 'vah': 1.9, 'poc': 1.8}}, position_prices={'mint': 110})
     assert before[0]['decision'] == 'REJECT' and 'cap' in before[0]['reasoning']
     process_positions(ledger, settings, {'mint': 120}, at=at)
     decisions, _ = run_strategy([pool], {'new': security}, ledger, settings,
-        cycle_id='after', config=config, position_prices={})
+        cycle_id='after', config=config, volume_profiles={'newpool': {'status': 'available', 'val': 1.7, 'vah': 1.9, 'poc': 1.8}}, position_prices={})
     assert decisions[0]['decision'] == 'BUY' and len(ledger.positions) == 1
     assert next(iter(ledger.positions.values())).token == 'new'

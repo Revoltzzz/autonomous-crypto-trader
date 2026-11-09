@@ -6,9 +6,18 @@ import pytest
 from act.config.settings import Settings
 from act.domain.models import AccountState, SecurityAssessment, TokenDiscovery, TradeProposal
 from act.paper.ledger import PaperLedger
-from act.strategy import StrategySettings, evaluate, run_strategy
+from act.strategy import StrategySettings, evaluate, run_strategy as original_run_strategy
 
 AT = datetime.now(timezone.utc)
+PROFILE = {"status": "available", "poc": 1.8, "val": 1.7, "vah": 1.9,
+           "value_area_pct": 70, "actual_value_area_pct": 75,
+           "candle_count": 12, "timeframe": "5m"}
+
+
+def run_strategy(pools, *args, **kwargs):
+    kwargs.setdefault("volume_profiles", {p.pool_address: PROFILE for p in pools})
+    return original_run_strategy(pools, *args, **kwargs)
+
 
 
 def pool(**updates):
@@ -36,7 +45,8 @@ def account(**updates):
 
 def decision(p=None, s=None, **kwargs):
     return evaluate(p or pool(), s or security(), cycle_id="cycle", at=AT,
-                    account=kwargs.pop("account", account()), **kwargs)
+                    account=kwargs.pop("account", account()),
+                    volume_profile=kwargs.pop("volume_profile", PROFILE), **kwargs)
 
 
 def test_accept_and_sizing():

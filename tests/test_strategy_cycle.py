@@ -23,6 +23,12 @@ def test_cycle_refreshes_remote_history_and_persists_decisions(tmp_path, monkeyp
     security = SecurityAssessment(score=1, lp_locked_pct=80 if accept else None,
                                   mint_authority_revoked=True, freeze_authority_revoked=True,
                                   top_holder_concentration_pct=12, source="offline")
+    from act.volume_profile import VolumeProfileFetcher
+    async def offline_profile(self, candidate, at=None):
+        assert accept, "Hard-filter failures must not request OHLCV"
+        return {"status": "available", "val": 1.7, "vah": 1.9, "poc": 1.8,
+                "value_area_pct": 70, "candle_count": 12, "timeframe": "5m"}
+    monkeypatch.setattr(VolumeProfileFetcher, "profile", offline_profile)
     remote = PaperLedger(tmp_path / "remote.json")
     saved = []
     loads = []
