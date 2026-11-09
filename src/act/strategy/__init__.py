@@ -1,0 +1,162 @@
+"""Evidence-based, fail-closed PAPER strategy. No wallet or exchange access."""
+from datetime import datetime, timezone
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import AwareDatetime, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from act.domain.models import Record, SecurityAssessment, TokenDiscovery, TradeProposal
+from act.paper.executor import PaperExecutor
+from act.risk.limits import check_trade
+
+
+class StrategySettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="STRATEGY_", extra="ignore", frozen=True)
+    max_rugcheck_score: float = Field(default=500, gt=0, allow_inf_nan=False)
+    min_lp_locked_pct: float = Field(default=80, ge=0, le=100)
+    min_liquidity_usd: float = Field(default=10000, gt=0)
+    min_volume_24h_usd: float = Field(default=25000, gt=0)
+    min_buys_sells_ratio: float = Field(default=1.1, gt=0)
+    max_pool_age_hours: float = Field(default=72, gt=0)
+    stop_fraction: float = Field(default=0.15, gt=0, lt=1)
+    target_fraction: float = Field(default=0.40, gt=0)
+    max_open_positions: int = Field(default=3, ge=1, le=3)
+
+
+class DecisionRecord(Record):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    cycle_id: str
+    mint_address: str
+    symbol: str | None
+    risk_score: float | None
+    decision: Literal["BUY", "REJECT", "WATCH"]
+    reasoning: str
+    proposal: dict | None = None
+    created_at: AwareDatetime
+
+
+def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
+             cycle_id: str, account, fee: float = 0.0025, slippage: float = 0.005,
+             config: StrategySettings | None = None, at=None) -> DecisionRecord:
+    cfg = config or StrategySettings()
+    at = at or datetime.now(timezone.utc)
+    missing = []
+    failures = []
+    evidence = [f"ASSET {pool.symbol or 'unknown symbol'} ({pool.mint_address})"]
+    for field in ("score", "lp_locked_pct", "mint_authority_revoked",
+                  "freeze_authority_revoked", "top_holder_concentration_pct"):
+        value = getattr(security, field, None)
+        evidence.append(f"{field}={value}")
+        if value is None:
+            missing.append(field)
+    score = security.score if security else None
+    if score is not None and score >= cfg.max_rugcheck_score:
+        failures.append(f"RugCheck score {score} must be below {cfg.max_rugcheck_score}; higher is worse")
+    if security:
+        evidence.extend(security.risks)
+        if security.lp_locked_pct is not None and security.lp_locked_pct < cfg.min_lp_locked_pct:
+            failures.append(f"LP locked below {cfg.min_lp_locked_pct}%")
+        for field in ("mint_authority_revoked", "freeze_authority_revoked"):
+            if getattr(security, field) is False:
+                failures.append(f"{field}=False: active authority")
+    for field, minimum in (("liquidity_usd", cfg.min_liquidity_usd),
+                           ("volume_24h_usd", cfg.min_volume_24h_usd)):
+        value = getattr(pool, field)
+        evidence.append(f"{field}={value}; minimum={minimum}")
+        if value is None:
+            missing.append(field)
+        elif value < minimum:
+            failures.append(f"{field} below {minimum}")
+    evidence.append(f"buys={pool.buys_24h}; sells={pool.sells_24h}; required ratio={cfg.min_buys_sells_ratio}")
+    if pool.buys_24h is None or pool.sells_24h is None:
+        missing.append("buys_24h/sells_24h")
+    elif pool.sells_24h == 0:
+        # A zero denominator is not reliable buy/sell evidence.
+        failures.append("Undefined buys/sells ratio: sells=0")
+    elif pool.buys_24h / pool.sells_24h < cfg.min_buys_sells_ratio:
+        failures.append(f"buys/sells ratio {pool.buys_24h / pool.sells_24h:.4f} below minimum")
+    age = (at - pool.first_seen_at).total_seconds() / 3600
+    evidence.append(f"pool age hours={age:.4f}; maximum={cfg.max_pool_age_hours}")
+    if not 0 <= age <= cfg.max_pool_age_hours:
+        failures.append("Pool age outside allowed range (or future timestamp)")
+    if pool.price_usd is None:
+        missing.append("price_usd")
+    if pool.unverified_fields:
+        missing.extend(pool.unverified_fields)
+    if missing:
+        failures.append("Missing/unverified data: " + ", ".join(sorted(set(missing))))
+    proposal = None
+    if not failures:
+        entry = pool.price_usd
+        stop = entry * (1 - cfg.stop_fraction)
+        target = entry * (1 + cfg.target_fraction)
+        risk_budget = account.equity * 0.01
+        nominal_notional = risk_budget / cfg.stop_fraction
+        entry_cost = entry * (1 + slippage) * (1 + fee)
+        stop_proceeds = stop * (1 - slippage) * (1 - fee)
+        # Nominal risk/stop sizing is reduced for costs, never relax the 1% gate.
+        size = min(nominal_notional / entry, risk_budget / (entry_cost - stop_proceeds)) * (1 - 1e-10)
+        trade = TradeProposal(token=pool.mint_address, entry_price=entry, size=size,
+                              stop_loss=stop, take_profit=target, strategy="screened-paper-v1",
+                              reason="; ".join(evidence))
+        gate = check_trade(trade, account, fee_pct=fee * 100, slippage_pct=slippage * 100)
+        if not gate.accepted:
+            failures.append(gate.reason)
+        else:
+            fees = size * fee * (entry * (1 + slippage) + stop * (1 - slippage))
+            slip = size * slippage * (entry + stop)
+            reward = size * (target * (1 - slippage) * (1 - fee) - entry_cost)
+            proposal = dict(trade.model_dump(mode="json"), entry_price_basis="GeckoTerminal base_token_price_usd (USD quote)",
+                            nominal_position_notional_usd=nominal_notional,
+                            position_notional_usd=size * entry, risk_budget_usd=risk_budget,
+                            max_estimated_loss=gate.risk_usd, estimated_fees=fees,
+                            estimated_slippage=slip, risk_reward_ratio=reward / gate.risk_usd,
+                            data_timestamp=at.isoformat(), pool_created_at=pool.first_seen_at.isoformat())
+            evidence.append("All evidence filters and inclusive-cost risk checks passed; SIMULATED PAPER ONLY")
+    return DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
+                          symbol=pool.symbol, risk_score=score,
+                          decision="REJECT" if failures else "BUY",
+                          reasoning="; ".join(evidence + failures), proposal=proposal, created_at=at)
+
+
+def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None, at=None):
+    cfg = config or StrategySettings()
+    at = at or datetime.now(timezone.utc)
+    executor = PaperExecutor(ledger, settings)
+    # Discovered mint quotes only; do not fabricate marks for old positions.
+    prices = {p.mint_address: p.price_usd for p in pools if p.price_usd is not None}
+    missing_marks = sorted({p.token for p in ledger.positions.values()} - prices.keys())
+    decisions = []
+    for pool in pools:
+        security = assessments.get(pool.mint_address)
+        if isinstance(security, dict):
+            security = SecurityAssessment.model_validate(security)
+        if missing_marks:
+            decision = DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
+                                      symbol=pool.symbol, risk_score=security.score if security else None,
+                                      decision="WATCH", reasoning="Missing current marks for open positions: " + ", ".join(missing_marks),
+                                      created_at=at)
+        else:
+            decision = evaluate(pool, security, cycle_id=cycle_id,
+                                account=ledger.account_state(prices), fee=ledger.fee,
+                                slippage=ledger.slippage, config=cfg, at=at)
+            if decision.decision == "BUY":
+                reason = None
+                if len(ledger.positions) >= cfg.max_open_positions:
+                    reason = f"Concurrent open position cap {cfg.max_open_positions} reached"
+                elif any(p.token == pool.mint_address for p in ledger.positions.values()):
+                    reason = "Already holding this mint; duplicate exposure rejected"
+                if reason:
+                    decision = decision.model_copy(update={"decision": "REJECT", "reasoning": decision.reasoning + "; " + reason})
+                else:
+                    fields = TradeProposal.model_fields
+                    trade = TradeProposal(**{k: v for k, v in decision.proposal.items() if k in fields})
+                    try:
+                        position = executor.open(trade, prices)
+                    except ValueError as exc:
+                        decision = decision.model_copy(update={"decision": "REJECT", "reasoning": decision.reasoning + "; executor gate: " + str(exc)})
+                    else:
+                        decision = decision.model_copy(update={"reasoning": decision.reasoning + "; paper position opened " + position.id})
+        decisions.append(decision.model_dump(mode="json"))
+    return decisions, prices
