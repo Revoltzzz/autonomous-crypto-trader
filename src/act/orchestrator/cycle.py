@@ -9,6 +9,7 @@ from act.collectors.geckoterminal import GeckoTerminalCollector
 from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
 from act.logging_setup import get_logger, setup_logging
+from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
 from act.strategy import run_strategy
 
@@ -79,26 +80,31 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 # Refresh after collection: an old deploy may have finalized while we fetched.
                 # The database prefix guard still rejects any later concurrent conflict.
                 ledger = await asyncio.to_thread(restore_ledger, store, settings)
+                step(f"position management: refresh quotes -> mark -> exits ({len(ledger.positions)} open positions)")
+                management = await manage_positions(ledger, settings, client=client)
+                report["position_management"] = management
                 step("evaluate every candidate; SIMULATED PAPER TRADING ONLY")
                 # Failed collection never opens a trade; missing assessments fail closed.
                 assessments = report["assessments"] if failure is None else {}
                 report["decisions"], prices = run_strategy(
-                    pools, assessments, ledger, settings, report["cycle_id"])
+                    pools, assessments, ledger, settings, report["cycle_id"],
+                    position_prices=management["prices"])
                 for decision in report["decisions"]:
                     log.info("PAPER_DECISION %s", json.dumps(decision, allow_nan=False))
                 report["decision_counts"] = {verdict: sum(d["decision"] == verdict
                     for d in report["decisions"]) for verdict in ("BUY", "REJECT", "WATCH")}
-                report["paper_positions"] = [p.model_dump(mode="json") for p in ledger.positions.values()]
+                observations = {p["id"]: p["quote"] for p in management["observations"]}
+                report["paper_positions"] = position_views(ledger, prices, observations)
                 report["paper_trades"] = [t.model_dump(mode="json") for t in ledger.closed_trades]
                 missing = sorted({p.token for p in ledger.positions.values()} - prices.keys())
                 if missing:
-                    # Save history and position effects without inventing a current equity.
                     report["paper_account"] = {"error": "Missing current marks", "mints": missing}
                     report["valuation_status"] = "unavailable"
                     snapshot = ledger_snapshot(ledger, report["paper_account"])
                 else:
                     account = ledger.account_state(prices).model_dump(mode="json")
                     report["paper_account"] = account
+                    report["valuation_status"] = "fresh_cycle_quotes"
                     snapshot = ledger_snapshot(ledger, account)
                 step("paper strategy complete: " + json.dumps(report["decision_counts"]))
             except Exception as exc:
