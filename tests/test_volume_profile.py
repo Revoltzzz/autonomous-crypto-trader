@@ -135,7 +135,8 @@ def test_young_pool_5m_and_insufficient_cached():
         return httpx.Response(200, json=candles(5, 2))
     result = fetch(handler, twice=True)
     assert calls == ['5'] and result['status'] == 'unavailable'
-    assert 'too few' in result['reason']
+    assert 'insufficient' in result['reason']
+    assert 'too few' in result['attempts'][0]
 
 
 @pytest.mark.parametrize('kind', ['429', 'missing', 'stale'])
@@ -194,3 +195,35 @@ def test_hard_filter_preflight_no_http(tmp_path):
             return await collect_volume_profiles([pool(liquidity_usd=1)], {'mint':security()},
                 PaperLedger(tmp_path/'ledger.json'), Settings(_env_file=None), client=client, at=AT)
     assert asyncio.run(run()) == {}
+
+
+def test_429_retry_after_then_success():
+    calls, delays = [], []
+    async def sleep(delay):
+        delays.append(delay)
+    def handler(r):
+        calls.append(r)
+        if len(calls) == 1:
+            return httpx.Response(429, headers={'Retry-After': '65'})
+        return httpx.Response(200, json=candles(5))
+    result = fetch(handler, retries=1, twice=True, sleep=sleep)
+    assert result['status'] == 'available'
+    assert delays == [65] and len(calls) == 2
+
+
+def test_dashboard_profile_fields_and_escaping(monkeypatch):
+    from act import api
+    monkeypatch.setattr(api, 'LATEST', {'decisions': [
+        {'mint_address': '<unsafe>', 'decision': 'BUY', 'proposal': {'volume_profile': {
+            'status': 'available', 'poc': 1.8, 'vah': 1.9, 'val': 1.7,
+            'price_vs_value_area': 'at_or_above_VAH', 'candle_count': 12,
+            'timeframe': '5m', 'value_area_pct': 70}}},
+        {'mint_address': 'missing', 'decision': 'REJECT', 'proposal': {'volume_profile': {
+            'status': 'unavailable', 'reason': 'HTTP 429 exhausted'}}},
+        {'mint_address': 'hardfail', 'decision': 'REJECT', 'proposal': None}]})
+    html = api.dashboard()
+    for text in ('SIMULATED - PAPER TRADING ONLY', 'POC USD', 'VAH USD', 'VAL USD',
+                 'Completed candles', 'at_or_above_VAH', 'HTTP 429 exhausted',
+                 'not_attempted', '&lt;unsafe&gt;'):
+        assert text in html
+    assert '<unsafe>' not in html
