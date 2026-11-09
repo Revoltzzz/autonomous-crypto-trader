@@ -11,7 +11,7 @@ from act.config.settings import Settings
 from act.logging_setup import get_logger, setup_logging
 from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
-from act.strategy import run_strategy
+from act.strategy import collect_volume_profiles, run_strategy
 
 
 def now():
@@ -86,9 +86,22 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 step("evaluate every candidate; SIMULATED PAPER TRADING ONLY")
                 # Failed collection never opens a trade; missing assessments fail closed.
                 assessments = report["assessments"] if failure is None else {}
+                profile_at = datetime.now(timezone.utc)
+                step("volume profiles: hard-filter preflight -> cached OHLCV confirmation")
+                profiles = await collect_volume_profiles(
+                    pools, assessments, ledger, settings, client=client, at=profile_at,
+                    position_prices=management["prices"])
+                report["volume_profile_counts"] = {
+                    "available": sum(p["status"] == "available" for p in profiles.values()),
+                    "unavailable": sum(p["status"] == "unavailable" for p in profiles.values()),
+                    "attempted_pools": len(profiles),
+                    "not_attempted_candidates": sum(p.pool_address not in profiles for p in pools),
+                }
+                report["volume_profiles"] = profiles
+                log.info("VOLUME_PROFILE %s", json.dumps(report["volume_profile_counts"]))
                 report["decisions"], prices = run_strategy(
                     pools, assessments, ledger, settings, report["cycle_id"],
-                    position_prices=management["prices"])
+                    position_prices=management["prices"], at=profile_at, volume_profiles=profiles)
                 for decision in report["decisions"]:
                     log.info("PAPER_DECISION %s", json.dumps(decision, allow_nan=False))
                 report["decision_counts"] = {verdict: sum(d["decision"] == verdict
