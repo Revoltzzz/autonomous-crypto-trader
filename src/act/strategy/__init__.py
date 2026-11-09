@@ -12,7 +12,7 @@ from act.risk.limits import check_trade
 
 
 class StrategySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="STRATEGY_", extra="ignore", frozen=True)
+    model_config = SettingsConfigDict(env_prefix="STRATEGY_", extra="ignore", frozen=True, allow_inf_nan=False)
     max_rugcheck_score: float = Field(default=500, gt=0, allow_inf_nan=False)
     min_lp_locked_pct: float = Field(default=80, ge=0, le=100)
     min_liquidity_usd: float = Field(default=10000, gt=0)
@@ -86,6 +86,8 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
         missing.extend(pool.unverified_fields)
     if missing:
         failures.append("Missing/unverified data: " + ", ".join(sorted(set(missing))))
+    if account is None:
+        failures.append("Current equity unavailable; no position sizing permitted")
     proposal = None
     if not failures:
         entry = pool.price_usd
@@ -133,10 +135,11 @@ def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None,
         if isinstance(security, dict):
             security = SecurityAssessment.model_validate(security)
         if missing_marks:
-            decision = DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
-                                      symbol=pool.symbol, risk_score=security.score if security else None,
-                                      decision="WATCH", reasoning="Missing current marks for open positions: " + ", ".join(missing_marks),
-                                      created_at=at)
+            evidence = evaluate(pool, security, cycle_id=cycle_id, account=None,
+                                fee=ledger.fee, slippage=ledger.slippage, config=cfg, at=at)
+            decision = evidence.model_copy(update={"decision": "WATCH",
+                "reasoning": evidence.reasoning + "; Missing current marks for open positions: "
+                + ", ".join(missing_marks)})
         else:
             decision = evaluate(pool, security, cycle_id=cycle_id,
                                 account=ledger.account_state(prices), fee=ledger.fee,
