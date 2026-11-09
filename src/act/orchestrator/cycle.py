@@ -1,4 +1,4 @@
-"""One honest research cycle. No automatic execution, even in paper mode."""
+"""Research cycles with evidence-gated paper execution only."""
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -10,6 +10,7 @@ from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
 from act.logging_setup import get_logger, setup_logging
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
+from act.strategy import run_strategy
 
 
 def now():
@@ -23,6 +24,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     log = get_logger(__name__)
     report = {"cycle_id": str(uuid4()), "started_at": now(), "status": "running",
               "paper_only": True, "steps": [], "markets": [], "discoveries": [],
+              "decisions": [], "paper_positions": [], "paper_trades": [],
               "assessments": {}, "collectors": {name: {"status": "skipped"}
               for name in ("CoinGecko", "GeckoTerminal", "RugCheck")}}
     settings.report_dir.mkdir(parents=True, exist_ok=True)
@@ -37,6 +39,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     store = None
     ledger = None
     active = None
+    pools = []
     try:
         store = persistence or get_persistence(settings)
         ledger = await asyncio.to_thread(restore_ledger, store, settings)
@@ -48,7 +51,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
             report["markets"] = [m.model_dump(mode="json") for m in await collector.fetch()]
         report["collectors"][active] = {"status": "success"}
         active = "GeckoTerminal"
-        step("fetch GeckoTerminal Solana pools (unverified endpoint)")
+        step("fetch verified GeckoTerminal /api/v2/networks/solana/new_pools; 429 Retry-After/backoff handling")
         async with GeckoTerminalCollector(**options) as collector:
             pools = await collector.fetch()
             report["discoveries"] = [p.model_dump(mode="json") for p in pools]
@@ -62,7 +65,6 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
         report["collectors"][active] = {"status": "success"}
         active = None
         report["status"] = "success"
-        step("research complete; no trades executed")
     except Exception as exc:
         failure = exc
         report["status"] = "failed"
@@ -74,13 +76,33 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
         snapshot = None
         if ledger is not None:
             try:
-                prices = {m["symbol"]: m["price_usd"] for m in report["markets"]}
-                account = ledger.account_state(prices).model_dump(mode="json")
-                report["paper_account"] = account
-                snapshot = ledger_snapshot(ledger, account)
+                step("evaluate every candidate; SIMULATED PAPER TRADING ONLY")
+                # Failed collection never opens a trade; missing assessments fail closed.
+                assessments = report["assessments"] if failure is None else {}
+                report["decisions"], prices = run_strategy(
+                    pools, assessments, ledger, settings, report["cycle_id"])
+                for decision in report["decisions"]:
+                    log.info("PAPER_DECISION %s", json.dumps(decision, allow_nan=False))
+                report["decision_counts"] = {verdict: sum(d["decision"] == verdict
+                    for d in report["decisions"]) for verdict in ("BUY", "REJECT", "WATCH")}
+                report["paper_positions"] = [p.model_dump(mode="json") for p in ledger.positions.values()]
+                report["paper_trades"] = [t.model_dump(mode="json") for t in ledger.closed_trades]
+                missing = sorted({p.token for p in ledger.positions.values()} - prices.keys())
+                if missing:
+                    # Save history and position effects without inventing a current equity.
+                    report["paper_account"] = {"error": "Missing current marks", "mints": missing}
+                    report["valuation_status"] = "unavailable"
+                    snapshot = ledger_snapshot(ledger, report["paper_account"])
+                else:
+                    account = ledger.account_state(prices).model_dump(mode="json")
+                    report["paper_account"] = account
+                    snapshot = ledger_snapshot(ledger, account)
+                step("paper strategy complete: " + json.dumps(report["decision_counts"]))
             except Exception as exc:
-                report["paper_account"] = {"error": str(exc)}
-                # Preserve remote state rather than replacing it with incomplete data.
+                failure = failure or exc
+                report["status"] = "failed"
+                report["strategy_error"] = str(exc)
+                log.exception("Paper strategy failed; no silent substitute state")
         report["finished_at"] = now()
         report["persistence"] = {"backend": type(store).__name__, "status": "pending"}
         with path.open("x", encoding="utf-8") as handle:
