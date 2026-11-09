@@ -51,6 +51,7 @@ class SecurityAssessment(Record):
 
 class TradeProposal(Record):
     token: str = Field(min_length=1)
+    pool_address: str | None = None
     entry_price: Positive
     size: Positive
     stop_loss: Positive | None = None
@@ -78,6 +79,7 @@ class RiskCheckResult(Record):
 class PaperPosition(Record):
     id: str = Field(default_factory=lambda: str(uuid4()))
     token: str
+    pool_address: str | None = None
     entry_price: Positive
     size: Positive
     stop_loss: Positive
@@ -98,6 +100,7 @@ class PaperPosition(Record):
 
 class PaperTrade(PaperPosition):
     exit_price: Positive
+    exit_price_basis: Positive | None = None
     closed_at: AwareDatetime
     exit_reason: str
     realized_pnl: Finite
