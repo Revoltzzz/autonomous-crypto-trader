@@ -76,6 +76,9 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
         snapshot = None
         if ledger is not None:
             try:
+                # Refresh after collection: an old deploy may have finalized while we fetched.
+                # The database prefix guard still rejects any later concurrent conflict.
+                ledger = await asyncio.to_thread(restore_ledger, store, settings)
                 step("evaluate every candidate; SIMULATED PAPER TRADING ONLY")
                 # Failed collection never opens a trade; missing assessments fail closed.
                 assessments = report["assessments"] if failure is None else {}
@@ -114,6 +117,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
             await asyncio.to_thread(store.save, report, snapshot)
             log.info("PERSISTED_CYCLE %s backend=%s", report["cycle_id"], type(store).__name__)
         except Exception as exc:
+            report["status"] = "failed"
             report["persistence"].update(status="failed", error=str(exc))
             failure = failure or exc
             log.exception("Cycle persistence failed; no silent local fallback")
