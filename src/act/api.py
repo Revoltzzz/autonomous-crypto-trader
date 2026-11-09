@@ -102,8 +102,8 @@ def dashboard():
         ("liquidity_usd", "Liquidity USD")], "No discoveries available; see collector outcomes.")
     positions = record_table(result.get("paper_positions", []), [
         ("token", "Token"), ("current_price", "Current quote USD"),
-        ("unrealized_pnl", "Net unrealized P&L USD"), ("stop_price", "Stop USD"),
-        ("stop_distance_pct", "Stop distance %"), ("target_price", "Target USD"),
+        ("unrealized_pnl", "Net unrealized P&L USD"), ("stop_loss", "Stop USD"),
+        ("stop_distance_pct", "Stop distance %"), ("take_profit", "Target USD"),
         ("target_distance_pct", "Target distance %"), ("age_hours", "Age hours"),
         ("stale_quoted", "Stale quote"), ("quote", "Quote provenance")], "No open paper positions.")
     trades = record_table(result.get("paper_trades", []), [
@@ -111,7 +111,7 @@ def dashboard():
         ("exit_price_basis", "Observed exit quote USD"), ("exit_price", "Slipped exit USD"),
         ("realized_pnl", "Net realized P&L USD"), ("opened_at", "Opened UTC"),
         ("closed_at", "Closed UTC")], "No closed paper trades; no live exit demonstrated.")
-    account = result.get("paper_account", {})
+    account = result.get("paper_account") or {}
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autonomous Crypto Trader | Research Status</title><style>
@@ -129,7 +129,7 @@ Last cycle: {safe(result.get("finished_at", "Not completed yet"))}<br>
 Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <div class="cards">{cards}</div><section><h2>Top new Solana pools</h2>{pools}</section>
 <section><h2>Paper account</h2><p>Equity USD: {safe(account.get("equity", "Unavailable"))}</p>
-<p>Valuation: {safe(result.get("valuation", "Unavailable"))}. Missing holding quotes make current equity unavailable, not zero.</p>
+<p>Valuation: {safe(result.get("valuation_status", "Unavailable"))}. Missing holding quotes make current equity unavailable, not zero.</p>
 <pre>{safe(json.dumps(account, indent=2))}</pre></section>
 <section id="positions"><h2>Open paper positions</h2><p class="badge">SIMULATED - PAPER TRADING ONLY</p>
 <p>Marks include estimated liquidation fees/slippage. Stale quotes have no mark and cannot trigger exits.</p>{positions}</section>
