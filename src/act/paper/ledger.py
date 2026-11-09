@@ -39,13 +39,12 @@ class PaperLedger:
         if init["fee"] != self.fee or init["slippage"] != self.slippage:
             raise ValueError("Existing ledger cost assumptions differ; do not overwrite history")
         self.initial_cash = positive(init["cash"])
-        # Validate all stored position and trade records rather than ignoring corruption.
         for event in self._events[1:]:
             if event["kind"] == "open":
                 PaperPosition.model_validate(event["position"])
             elif event["kind"] == "close":
                 PaperTrade.model_validate(event["trade"])
-            elif event["kind"] != "mark":
+            elif event["kind"] not in ("mark", "position_quotes"):
                 raise ValueError("Unknown ledger event")
         self.positions
 
@@ -101,6 +100,11 @@ class PaperLedger:
             temporary.unlink(missing_ok=True)
         self._events, self._disk = events, text
 
+    def record_position_quotes(self, observations, at):
+        """Append this cycle's fresh/null marks, never change prior observations."""
+        self._append({"kind": "position_quotes", "at": at.isoformat(),
+                      "positions": observations})
+
     def open(self, proposal: TradeProposal) -> PaperPosition:
         if proposal.leverage != 1 or proposal.stop_loss is None:
             raise ValueError("Paper longs require a stop-loss and no leverage")
@@ -111,7 +115,8 @@ class PaperLedger:
         if price * proposal.size + fee > self.cash:
             raise ValueError("Insufficient paper cash")
         position = PaperPosition(
-            token=proposal.token, entry_price=price, size=proposal.size,
+            token=proposal.token, pool_address=proposal.pool_address,
+            entry_price=price, size=proposal.size,
             stop_loss=proposal.stop_loss, take_profit=proposal.take_profit,
             fees_paid=fee, opened_at=utcnow(), strategy=proposal.strategy, reason=proposal.reason)
         self._append({"kind": "open", "at": position.opened_at.isoformat(),
@@ -126,7 +131,8 @@ class PaperLedger:
         fees = position.fees_paid + price * position.size * self.fee
         values = position.model_dump()
         values["fees_paid"] = fees
-        trade = PaperTrade(**values, exit_price=price, closed_at=utcnow(), exit_reason=reason,
+        trade = PaperTrade(**values, exit_price=price, exit_price_basis=market_price,
+                           closed_at=utcnow(), exit_reason=reason,
                            realized_pnl=(price - position.entry_price) * position.size - fees)
         self._append({"kind": "close", "at": trade.closed_at.isoformat(),
                       "trade": trade.model_dump(mode="json")})
