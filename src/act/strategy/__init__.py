@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from act.domain.models import Record, SecurityAssessment, TokenDiscovery, TradeProposal
 from act.paper.executor import PaperExecutor
 from act.risk.limits import check_trade
+from act.volume_profile import price_position, profile_stop, VolumeProfileFetcher
 
 
 class StrategySettings(BaseSettings):
@@ -38,7 +39,7 @@ class DecisionRecord(Record):
 
 def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
              cycle_id: str, account, fee: float = 0.0025, slippage: float = 0.005,
-             config: StrategySettings | None = None, at=None) -> DecisionRecord:
+             config: StrategySettings | None = None, at=None, volume_profile=None, screening_only=False) -> DecisionRecord:
     cfg = config or StrategySettings()
     at = at or datetime.now(timezone.utc)
     missing = []
@@ -89,12 +90,35 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
     if account is None:
         failures.append("Current equity unavailable; no position sizing permitted")
     proposal = None
+    if screening_only:
+        return DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
+            symbol=pool.symbol, risk_score=score, decision="REJECT" if failures else "WATCH",
+            reasoning="; ".join(evidence + failures + ["Hard-filter preflight only; no trade"]),
+            proposal=None, created_at=at)
+    vp = volume_profile or {"status": "unavailable", "reason": "OHLCV profile not supplied"}
+    if not failures:
+        proposal = {"volume_profile": vp}
+        if vp.get("status") != "available":
+            failures.append("volume_profile: unavailable: " + vp.get("reason", "unknown failure"))
+        else:
+            vp = dict(vp, price_vs_value_area=price_position(pool.price_usd, vp))
+            proposal = {"volume_profile": vp}
+            evidence.append("volume_profile=" + str(vp))
+            if vp["price_vs_value_area"] == "below_VAL":
+                failures.append("Price below VAL: volume-profile invalidation")
+            elif vp["price_vs_value_area"] != "at_or_above_VAH":
+                failures.append("Price inside value area: acceptance requires price >= VAH")
+            elif vp["val"] >= pool.price_usd:
+                failures.append("Degenerate profile: VAL must be strictly below entry")
+    else:
+        evidence.append("volume_profile: not_attempted (hard filters/equity failed)")
     if not failures:
         entry = pool.price_usd
-        stop = entry * (1 - cfg.stop_fraction)
+        stop, stop_basis = profile_stop(entry, vp["val"], cfg.stop_fraction)
+        evidence.append(stop_basis)
         target = entry * (1 + cfg.target_fraction)
         risk_budget = account.equity * 0.01
-        nominal_notional = risk_budget / cfg.stop_fraction
+        nominal_notional = risk_budget / ((entry - stop) / entry)
         entry_cost = entry * (1 + slippage) * (1 + fee)
         stop_proceeds = stop * (1 - slippage) * (1 - fee)
         size = min(nominal_notional / entry, risk_budget / (entry_cost - stop_proceeds)) * (1 - 1e-10)
@@ -109,7 +133,8 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
             fees = size * fee * (entry * (1 + slippage) + stop * (1 - slippage))
             slip = size * slippage * (entry + stop)
             reward = size * (target * (1 - slippage) * (1 - fee) - entry_cost)
-            proposal = dict(trade.model_dump(mode="json"), entry_price_basis="GeckoTerminal base_token_price_usd (USD quote)",
+            proposal = dict(trade.model_dump(mode="json"), volume_profile=vp, stop_basis=stop_basis,
+                            entry_price_basis="GeckoTerminal base_token_price_usd (USD quote)",
                             nominal_position_notional_usd=nominal_notional,
                             position_notional_usd=size * entry, risk_budget_usd=risk_budget,
                             max_estimated_loss=gate.risk_usd, estimated_fees=fees,
@@ -123,7 +148,7 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
 
 
 def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None, at=None,
-                 position_prices=None):
+                 position_prices=None, volume_profiles=None):
     cfg = config or StrategySettings()
     at = at or datetime.now(timezone.utc)
     executor = PaperExecutor(ledger, settings)
@@ -149,7 +174,8 @@ def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None,
         else:
             decision = evaluate(pool, security, cycle_id=cycle_id,
                                 account=ledger.account_state(prices), fee=ledger.fee,
-                                slippage=ledger.slippage, config=cfg, at=at)
+                                slippage=ledger.slippage, config=cfg, at=at,
+                                volume_profile=(volume_profiles or {}).get(pool.pool_address))
             if decision.decision == "BUY":
                 reason = None
                 if len(ledger.positions) >= cfg.max_open_positions:
@@ -169,3 +195,27 @@ def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None,
                         decision = decision.model_copy(update={"reasoning": decision.reasoning + "; paper position opened " + position.id})
         decisions.append(decision.model_dump(mode="json"))
     return decisions, prices
+
+
+async def collect_volume_profiles(pools, assessments, ledger, settings, *,
+                                  position_prices=None, client=None, at=None):
+    """No OHLCV HTTP until ALL hard filters pass. No executor in preflight."""
+    at = at or datetime.now(timezone.utc)
+    prices = {p.mint_address: p.price_usd for p in pools if p.price_usd is not None}
+    for position in ledger.positions.values():
+        prices.pop(position.token, None)
+    prices.update(position_prices or {})
+    missing = {p.token for p in ledger.positions.values()} - prices.keys()
+    account = None if missing else ledger.account_state(prices)
+    profiles = {}
+    async with VolumeProfileFetcher(client=client, timeout=settings.http_timeout,
+                                    retries=settings.http_retries) as fetcher:
+        for pool in pools:
+            security = assessments.get(pool.mint_address)
+            if isinstance(security, dict):
+                security = SecurityAssessment.model_validate(security)
+            screening = evaluate(pool, security, cycle_id="profile-preflight", account=account,
+                                 at=at, screening_only=True)
+            if screening.decision != "REJECT":
+                profiles[pool.pool_address] = await fetcher.profile(pool, at=at)
+    return profiles
