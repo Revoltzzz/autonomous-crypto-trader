@@ -78,6 +78,16 @@ def safe(value):
     return escape(str(value))
 
 
+def record_table(records, columns, empty):
+    headers = ''.join(f'<th>{safe(label)}</th>' for _, label in columns)
+    rows = ''.join('<tr>' + ''.join(
+        f'<td>{safe(record.get(key)) if record.get(key) is not None else "Unavailable"}</td>'
+        for key, _ in columns) + '</tr>' for record in records)
+    if not rows:
+        rows = f'<tr><td colspan="{len(columns)}">{safe(empty)}</td></tr>'
+    return f'<div class="scroll"><table><thead><tr>{headers}</tr></thead><tbody>{rows}</tbody></table></div>'
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     result = LATEST or {}
@@ -87,17 +97,26 @@ def dashboard():
         f'{safe(markets[symbol]["price_usd"]) if symbol in markets else "Unavailable"}'
         '</strong><p>USD</p></article>' for symbol in ("BTC", "ETH", "SOL")
     )
-    rows = "".join(
-        '<tr>' + ''.join(f'<td>{safe(pool.get(key, "Unavailable"))}</td>' for key in
-                        ("name", "pool_address", "price_usd", "liquidity_usd")) + '</tr>'
-        for pool in result.get("discoveries", [])[:10]
-    ) or '<tr><td colspan="4">No discoveries available; see collector outcomes.</td></tr>'
+    pools = record_table(result.get("discoveries", [])[:10], [
+        ("name", "Name"), ("pool_address", "Pool"), ("price_usd", "Price USD"),
+        ("liquidity_usd", "Liquidity USD")], "No discoveries available; see collector outcomes.")
+    positions = record_table(result.get("paper_positions", []), [
+        ("token", "Token"), ("current_price", "Current quote USD"),
+        ("unrealized_pnl", "Net unrealized P&L USD"), ("stop_price", "Stop USD"),
+        ("stop_distance_pct", "Stop distance %"), ("target_price", "Target USD"),
+        ("target_distance_pct", "Target distance %"), ("age_hours", "Age hours"),
+        ("stale_quoted", "Stale quote"), ("quote", "Quote provenance")], "No open paper positions.")
+    trades = record_table(result.get("paper_trades", []), [
+        ("token", "Token"), ("exit_reason", "Exit reason"),
+        ("exit_price_basis", "Observed exit quote USD"), ("exit_price", "Slipped exit USD"),
+        ("realized_pnl", "Net realized P&L USD"), ("opened_at", "Opened UTC"),
+        ("closed_at", "Closed UTC")], "No closed paper trades; no live exit demonstrated.")
     account = result.get("paper_account", {})
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autonomous Crypto Trader | Research Status</title><style>
 body{{margin:0;background:#0b1220;color:#e2e8f0;font:16px system-ui;line-height:1.6}}
-main{{max-width:1100px;margin:auto;padding:32px}}h1{{line-height:1.2}}
+main{{max-width:1200px;margin:auto;padding:32px}}h1{{line-height:1.2}}
 .badge{{color:#fbbf24;font-weight:700}}.cards{{display:flex;gap:16px;flex-wrap:wrap}}
 article,section{{background:#152238;border:1px solid #334155;border-radius:12px;padding:20px;margin:16px 0}}
 article{{flex:1}}strong{{font-size:24px}}table{{width:100%;border-collapse:collapse}}
@@ -108,19 +127,20 @@ pre{{white-space:pre-wrap;overflow-wrap:anywhere}}.scroll{{overflow:auto}}a{{col
 <p>System: {safe(result.get("status", "Waiting for first cycle"))}<br>
 Last cycle: {safe(result.get("finished_at", "Not completed yet"))}<br>
 Persistence: {safe(result.get("persistence", "Waiting"))}</p>
-<div class="cards">{cards}</div><section><h2>Top new Solana pools</h2><div class="scroll">
-<table><thead><tr><th>Name</th><th>Pool</th><th>Price USD</th><th>Liquidity USD</th></tr></thead>
-<tbody>{rows}</tbody></table></div></section><section><h2>Paper account</h2>
-<p>Equity USD: {safe(account.get("equity", "Unavailable"))}</p>
+<div class="cards">{cards}</div><section><h2>Top new Solana pools</h2>{pools}</section>
+<section><h2>Paper account</h2><p>Equity USD: {safe(account.get("equity", "Unavailable"))}</p>
+<p>Valuation: {safe(result.get("valuation", "Unavailable"))}. Missing holding quotes make current equity unavailable, not zero.</p>
 <pre>{safe(json.dumps(account, indent=2))}</pre></section>
+<section id="positions"><h2>Open paper positions</h2><p class="badge">SIMULATED - PAPER TRADING ONLY</p>
+<p>Marks include estimated liquidation fees/slippage. Stale quotes have no mark and cannot trigger exits.</p>{positions}</section>
+<section id="trades"><h2>Paper trade history (including losses)</h2>
+<p>Net realized P&L includes entry/exit fees and slippage. Exits use the first cycle observing the trigger, not an intracycle fill.</p>{trades}</section>
+<section id="management"><h2>Position management cycle</h2>
+<pre>{safe(json.dumps(result.get("position_management", {}), indent=2))}</pre>
+<pre>{safe(json.dumps(result.get("steps", []), indent=2))}</pre></section>
 <section id="decisions"><h2>Candidate decisions (every candidate)</h2>
-<p>SIMULATED - PAPER TRADING ONLY</p>
 <pre>{safe(json.dumps(result.get("decision_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decisions", []), indent=2))}</pre></section>
-<section id="positions"><h2>Open paper positions</h2>
-<pre>{safe(json.dumps(result.get("paper_positions", []), indent=2))}</pre></section>
-<section id="trades"><h2>Paper trade history (including losses)</h2>
-<pre>{safe(json.dumps(result.get("paper_trades", []), indent=2))}</pre></section>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
 <section><h2>Security check outcomes</h2><pre>{safe(json.dumps(result.get("assessments", {}), indent=2))}</pre>
 <p>Missing security information is unknown, never safe.</p></section>
