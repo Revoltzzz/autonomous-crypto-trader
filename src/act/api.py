@@ -111,6 +111,19 @@ def dashboard():
         ("exit_price_basis", "Observed exit quote USD"), ("exit_price", "Slipped exit USD"),
         ("realized_pnl", "Net realized P&L USD"), ("opened_at", "Opened UTC"),
         ("closed_at", "Closed UTC")], "No closed paper trades; no live exit demonstrated.")
+    profile_rows = []
+    for decision in result.get("decisions", []):
+        vp = (decision.get("proposal") or {}).get("volume_profile") or {
+            "status": "not_attempted", "reason": "Hard filters/equity failed"}
+        profile_rows.append(dict(vp, token=decision.get("mint_address"),
+                                 decision=decision.get("decision")))
+    profiles = record_table(profile_rows, [
+        ("token", "Token"), ("decision", "Decision"), ("status", "Volume profile"),
+        ("poc", "POC USD"), ("vah", "VAH USD"), ("val", "VAL USD"),
+        ("value_area_pct", "Target VA %"), ("actual_value_area_pct", "Actual VA %"),
+        ("price_vs_value_area", "Price vs VA"), ("timeframe", "Timeframe"),
+        ("candle_count", "Completed candles"), ("reason", "Unavailable reason")],
+        "No candidate decisions yet.")
     account = result.get("paper_account") or {}
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -139,6 +152,8 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <pre>{safe(json.dumps(result.get("position_management", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("steps", []), indent=2))}</pre></section>
 <section id="decisions"><h2>Candidate decisions (every candidate)</h2>
+<h3>Volume profile confirmation</h3>{profiles}
+<pre>{safe(json.dumps(result.get("volume_profile_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decision_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decisions", []), indent=2))}</pre></section>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
