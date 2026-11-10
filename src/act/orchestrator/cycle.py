@@ -14,6 +14,7 @@ from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
 from act.strategy import collect_volume_profiles, run_strategy
 from act.security import enrich_security
+from act.results import capture_results
 
 
 def now():
@@ -153,6 +154,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["strategy_error"] = str(exc)
                 log.exception("Paper strategy failed; no silent substitute state")
         report["finished_at"] = now()
+        capture_results(report)
         report["persistence"] = {"backend": type(store).__name__, "status": "pending"}
         with path.open("x", encoding="utf-8") as handle:
             json.dump(report, handle, indent=2, allow_nan=False)
