@@ -124,7 +124,22 @@ def trade_views(trades):
 def dashboard():
     result = LATEST or {}
     account = result.get("paper_account") or {}
+    profile_rows = []
+    for decision in result.get("decisions", []):
+        vp = (decision.get("proposal") or {}).get("volume_profile") or {
+            "status": "not_attempted", "reason": "Hard filters/equity failed"}
+        profile_rows.append(dict(vp, token=decision.get("mint_address"),
+                                 decision=decision.get("decision")))
+    profiles = record_table(profile_rows, [
+        ("token", "Token"), ("decision", "Decision"), ("status", "Volume profile"),
+        ("poc", "POC USD"), ("vah", "VAH USD"), ("val", "VAL USD"),
+        ("value_area_pct", "Target VA %"), ("actual_value_area_pct", "Actual VA %"),
+        ("price_vs_value_area", "Price vs VA"), ("timeframe", "Timeframe"),
+        ("candle_count", "Completed candles"), ("reason", "Unavailable reason")],
+        "No candidate decisions yet.")
     panels = results_panels(result, RECENT, HISTORY_ERROR)
+    empty_trades = ("<p>No trades yet - the strategy has not yet produced a BUY.</p>"
+                    if account and not result.get("paper_trades") and not result.get("paper_positions") else "")
     positions = record_table(result.get("paper_positions", []), [
         ("token", "Token"), ("entry_price", "Entry USD"), ("current_price", "Current quote USD"),
         ("unrealized_pnl", "Net unrealized P&L USD"), ("stop_loss", "Stop USD"),
@@ -157,8 +172,9 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <p>Valuation: {safe(result.get("valuation_status", "Unavailable"))}. Missing holding quotes make equity unavailable, never zero.</p>
 {panels}
 <section id="positions"><h2>Open paper positions</h2><p>Marks include liquidation fees/slippage. Quote freshness is as of the recorded cycle, not a streaming price. Stale quotes have no mark and cannot trigger exits.</p>{positions}</section>
-<section id="trades"><h2>Paper trade history (including losses)</h2><p>No trades yet - the strategy has not yet produced a BUY is the empty-state interpretation only when the ledger has no trades and no positions.</p>
+<section id="trades"><h2>Paper trade history (including losses)</h2>{empty_trades}
 <p>Every closed ledger trade is retained, including losses. Net P&L and total fees are ledger values; entry and exit prices include slippage. Historical entry quote and separate slippage dollars were not recorded and are unavailable, not estimated. Exits use cycle-observed quotes, not intracycle fills.</p>{trades}</section>
+<section id="decisions"><h2>Volume profile confirmation</h2>{profiles}</section>
 <section id="audit"><h2>Latest cycle audit</h2><details><summary>Position management / ordered steps</summary><pre>{safe(json.dumps(result.get("position_management", {}), indent=2))}</pre><pre>{safe(json.dumps(result.get("steps", []), indent=2))}</pre></details>
 <details><summary>Markets / pools / assessments / volume profiles / source outcomes</summary><pre>{safe(json.dumps({k: result.get(k) for k in ("markets", "discoveries", "assessments", "volume_profile_counts", "collectors", "discovery_stats", "security_source_stats")}, indent=2))}</pre></details></section>
 <p>Cycles run about every 20 minutes after completion while awake. Free hosting may sleep and pauses monitoring. Local-only history is ephemeral; configured Supabase storage survives redeploys. Historical results are not investment advice. <a href="/health">Health JSON</a> · <a href="/status">Full cycle JSON</a></p></main></body></html>'''
