@@ -73,11 +73,24 @@ class GeckoAdapter(GeckoTerminalCollector):
 
     async def _payload(self, **kwargs):
         endpoint = URL if self.source == SOURCES[0] else URL.replace("new_pools", "trending_pools")
-        return await super()._payload(url=endpoint, **kwargs)
+        self.sample = await super()._payload(url=endpoint, params={"include": "base_token,quote_token"}, **kwargs)
+        return self.sample
 
     async def fetch(self):
         rows = await super().fetch()
-        return [Candidate(**p.model_dump(), sources=[self.source]) for p in rows[:self.limit]]
+        included = {x["id"]: x.get("attributes", {}) for x in self.sample.get("included", []) if x.get("type") == "token"}
+        raw = {x["attributes"]["address"]: x for x in self.sample["data"]}
+        result = []
+        for p in rows[:self.limit]:
+            relationships = raw[p.pool_address]["relationships"]
+            symbols = []
+            for side in ("base_token", "quote_token"):
+                token_id = relationships.get(side, {}).get("data", {}).get("id")
+                symbol = included.get(token_id, {}).get("symbol")
+                if isinstance(symbol, str) and symbol:
+                    symbols.append(symbol)
+            result.append(Candidate(**p.model_dump(), sources=[self.source], pair_symbols=symbols))
+        return result
 
 
 class DexAdapter(BaseCollector):
