@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from act.collectors.coingecko import CoinGeckoCollector
-from act.collectors.geckoterminal import GeckoTerminalCollector
+from act.collectors.geckoterminal import GeckoTerminalCollector as GeckoTerminalCollector
 from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
 from act.discovery import discover, rejection_breakdown
