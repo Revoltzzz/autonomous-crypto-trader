@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 import httpx
 import pytest
 
-from act.discovery import (Candidate, DexAdapter, GeckoAdapter, DiscoverySettings,
+from act.discovery import (DexAdapter, GeckoAdapter, DiscoverySettings,
                            SOURCES, discover, merge_candidates, normalize_pair,
                            rejection_breakdown)
 from act.collectors.base import CollectorError
@@ -163,3 +163,34 @@ def test_evaluator_sources_and_exclusive_rejection_counts():
     assert counts["by_reason"]["missing:score"] == 2
     assert StrategySettings().max_pool_age_hours == 72
     assert StrategySettings().max_rugcheck_score == 500
+
+def test_boost_contract_empty_pair_is_not_fabricated():
+    async def check():
+        def handler(request):
+            if "token-boosts" in request.url.path:
+                return httpx.Response(200, json=[BOOST])
+            assert request.url.path.endswith(BOOST["tokenAddress"])
+            return httpx.Response(200, json=[])
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            async with DexAdapter(SOURCES[3], 10, 5, client=client, retries=0) as adapter:
+                assert await adapter.fetch() == []
+    run(check())
+
+
+def test_disabled_sources_and_cap_stats():
+    async def check():
+        payload = deepcopy(GT_NEW)
+        other = deepcopy(payload["data"][0])
+        other["attributes"]["address"] = "synthetic-other-pool"
+        other["relationships"]["base_token"]["data"]["id"] = "solana_synthetic-other-mint"
+        payload["data"].append(other)
+        def handler(request):
+            return httpx.Response(200, json=payload)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            stats = {}
+            rows = await discover(options={"client": client, "retries": 0}, config=DiscoverySettings(enable_dexscreener=False, max_candidates=1), stats=stats)
+            assert len(rows) == 1
+            assert stats[SOURCES[2]]["status"] == "skipped"
+            assert stats["totals"] == dict(returned=4, unique=2, duplicates=2, kept=1, removed_by_cap=1, cap=1)
+            assert rows[0].sources == list(SOURCES[:2])
+    run(check())
