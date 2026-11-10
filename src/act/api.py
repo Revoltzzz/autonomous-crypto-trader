@@ -98,7 +98,7 @@ def dashboard():
         '</strong><p>USD</p></article>' for symbol in ("BTC", "ETH", "SOL")
     )
     pools = record_table(result.get("discoveries", [])[:10], [
-        ("name", "Name"), ("pool_address", "Pool"), ("price_usd", "Price USD"),
+        ("name", "Name"), ("sources", "Discovery sources"), ("pool_address", "Pool"), ("price_usd", "Price USD"),
         ("liquidity_usd", "Liquidity USD")], "No discoveries available; see collector outcomes.")
     positions = record_table(result.get("paper_positions", []), [
         ("token", "Token"), ("current_price", "Current quote USD"),
@@ -156,6 +156,8 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <pre>{safe(json.dumps(result.get("volume_profile_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decision_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decisions", []), indent=2))}</pre></section>
+<section id="discovery"><h2>Per-source discovery stats</h2><pre>{safe(json.dumps(result.get("discovery_stats", {}), indent=2))}</pre></section>
+<section id="rejections"><h2>Rejection-reason breakdown</h2><pre>{safe(json.dumps(result.get("rejection_breakdown", {}), indent=2))}</pre></section>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
 <section><h2>Security check outcomes</h2><pre>{safe(json.dumps(result.get("assessments", {}), indent=2))}</pre>
 <p>Missing security information is unknown, never safe.</p></section>

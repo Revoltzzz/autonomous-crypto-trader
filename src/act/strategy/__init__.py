@@ -35,6 +35,9 @@ class DecisionRecord(Record):
     reasoning: str
     proposal: dict | None = None
     created_at: AwareDatetime
+    sources: list[str] = Field(default_factory=list)
+    failure_reasons: list[str] = Field(default_factory=list)
+    missing_fields: list[str] = Field(default_factory=list)
 
 
 def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
@@ -92,7 +95,7 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
     proposal = None
     if screening_only:
         return DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
-            symbol=pool.symbol, risk_score=score, decision="REJECT" if failures else "WATCH",
+            symbol=pool.symbol, risk_score=score, sources=getattr(pool, "sources", ["geckoterminal_new"]), failure_reasons=list(failures), missing_fields=sorted(set(missing)), decision="REJECT" if failures else "WATCH",
             reasoning="; ".join(evidence + failures + ["Hard-filter preflight only; no trade"]),
             proposal=None, created_at=at)
     vp = volume_profile or {"status": "unavailable", "reason": "OHLCV profile not supplied"}
@@ -142,7 +145,7 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
                             data_timestamp=at.isoformat(), pool_created_at=pool.first_seen_at.isoformat())
             evidence.append("All evidence filters and inclusive-cost risk checks passed; SIMULATED PAPER ONLY")
     return DecisionRecord(cycle_id=cycle_id, mint_address=pool.mint_address,
-                          symbol=pool.symbol, risk_score=score,
+                          symbol=pool.symbol, risk_score=score, sources=getattr(pool, "sources", ["geckoterminal_new"]), failure_reasons=list(failures), missing_fields=sorted(set(missing)),
                           decision="REJECT" if failures else "BUY",
                           reasoning="; ".join(evidence + failures), proposal=proposal, created_at=at)
 
@@ -168,7 +171,7 @@ def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None,
         if missing_marks:
             evidence = evaluate(pool, security, cycle_id=cycle_id, account=None,
                                 fee=ledger.fee, slippage=ledger.slippage, config=cfg, at=at)
-            decision = evidence.model_copy(update={"decision": "WATCH",
+            decision = evidence.model_copy(update={"decision": "WATCH", "failure_reasons": evidence.failure_reasons + ["Missing current marks for open positions"],
                 "reasoning": evidence.reasoning + "; Missing current marks for open positions: "
                 + ", ".join(missing_marks)})
         else:
@@ -183,14 +186,14 @@ def run_strategy(pools, assessments, ledger, settings, cycle_id, *, config=None,
                 elif any(p.token == pool.mint_address for p in ledger.positions.values()):
                     reason = "Already holding this mint; duplicate exposure rejected"
                 if reason:
-                    decision = decision.model_copy(update={"decision": "REJECT", "reasoning": decision.reasoning + "; " + reason})
+                    decision = decision.model_copy(update={"decision": "REJECT", "reasoning": decision.reasoning + "; " + reason, "failure_reasons": decision.failure_reasons + [reason]})
                 else:
                     fields = TradeProposal.model_fields
                     trade = TradeProposal(**{k: v for k, v in decision.proposal.items() if k in fields})
                     try:
                         position = executor.open(trade, prices)
                     except ValueError as exc:
-                        decision = decision.model_copy(update={"decision": "REJECT", "reasoning": decision.reasoning + "; executor gate: " + str(exc)})
+                        decision = decision.model_copy(update={"decision": "REJECT", "failure_reasons": decision.failure_reasons + ["executor gate: " + str(exc)], "reasoning": decision.reasoning + "; executor gate: " + str(exc)})
                     else:
                         decision = decision.model_copy(update={"reasoning": decision.reasoning + "; paper position opened " + position.id})
         decisions.append(decision.model_dump(mode="json"))
