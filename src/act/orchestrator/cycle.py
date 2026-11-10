@@ -13,6 +13,7 @@ from act.logging_setup import get_logger, setup_logging
 from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
 from act.strategy import collect_volume_profiles, run_strategy
+from act.security import enrich_security
 
 
 def now():
@@ -27,6 +28,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     report = {"cycle_id": str(uuid4()), "started_at": now(), "status": "running",
               "paper_only": True, "steps": [], "markets": [], "discoveries": [],
               "discovery_stats": {}, "rejection_breakdown": {},
+              "security_evidence": {}, "security_source_stats": {},
               "decisions": [], "paper_positions": [], "paper_trades": [],
               "assessments": {}, "collectors": {name: {"status": "skipped"}
               for name in ("CoinGecko", "GeckoTerminal", "RugCheck")}}
@@ -71,6 +73,14 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 assessment = await collector.fetch(pool.mint_address)
                 report["assessments"][pool.mint_address] = assessment.model_dump(mode="json")
         report["collectors"][active] = {"status": "success"}
+        active = "SolanaRPC"
+        step("security: bounded onchain primary verification after unchanged market preflight")
+        report["assessments"], report["security_evidence"], report["security_source_stats"] = await enrich_security(
+            pools, report["assessments"], client=client)
+        security_stats = report["security_source_stats"]
+        report["collectors"][active] = {"status": "degraded" if security_stats.get("error_candidates") else
+            "success" if security_stats.get("enabled") else "skipped", **security_stats}
+        log.info("SECURITY_SOURCES %s", json.dumps(security_stats, allow_nan=False))
         active = None
         report["status"] = "success"
     except Exception as exc:
@@ -112,6 +122,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                     decision["sources"] = getattr(p, "sources", ["geckoterminal_new"])
                     decision["pool_address"] = p.pool_address
                     decision["proposal"] = dict(decision.get("proposal") or {},
+                        security_evidence=report["security_evidence"].get(p.mint_address, {}),
                         discovery={"sources": decision["sources"], "pool_address": p.pool_address,
                                    "source_url": p.source_url,
                                    "alternate_pool_addresses": getattr(p, "alternate_pool_addresses", [])},
