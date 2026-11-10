@@ -194,3 +194,23 @@ def test_disabled_sources_and_cap_stats():
             assert stats["totals"] == dict(returned=4, unique=2, duplicates=2, kept=1, removed_by_cap=1, cap=1)
             assert rows[0].sources == list(SOURCES[:2])
     run(check())
+
+def test_gecko_pair_symbols_from_real_included_metadata():
+    # Real included-token projection observed 2026-11-10; metrics fixture above.
+    async def check():
+        payload = deepcopy(GT_TRENDING)
+        base_id = payload["data"][0]["relationships"]["base_token"]["data"]["id"]
+        quote_id = "solana_So11111111111111111111111111111111111111112"
+        payload["data"][0]["relationships"]["quote_token"] = {"data": {"id": quote_id}}
+        payload["included"] = [
+            {"id": base_id, "type": "token", "attributes": {"name": "Wealth Coin", "symbol": "WEALTH"}},
+            {"id": quote_id, "type": "token", "attributes": {"name": "Wrapped SOL", "symbol": "SOL"}},
+        ]
+        def handler(request):
+            assert request.url.params["include"] == "base_token,quote_token"
+            return httpx.Response(200, json=payload)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            async with GeckoAdapter(SOURCES[1], 10, client=client, retries=0) as adapter:
+                rows = await adapter.fetch()
+        assert rows[0].pair_symbols == ["WEALTH", "SOL"]
+    run(check())
