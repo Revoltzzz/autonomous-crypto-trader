@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from act.domain.models import Record, SecurityAssessment, TokenDiscovery, TradeProposal
+from act.collectors.solana_rpc import SecuritySettings
 from act.paper.executor import PaperExecutor
 from act.risk.limits import check_trade
 from act.volume_profile import price_position, profile_stop, VolumeProfileFetcher
@@ -59,6 +60,11 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
         failures.append(f"RugCheck score {score} must be below {cfg.max_rugcheck_score}; higher is worse")
     if security:
         evidence.extend(security.risks)
+        failures.extend(r for r in security.risks if r.startswith("Security disagreement:"))
+        security_cfg = SecuritySettings()
+        if (security_cfg.security_onchain_enabled and security.top_holder_concentration_pct is not None
+                and security.top_holder_concentration_pct >= security_cfg.security_max_top_holders_pct * 100):
+            failures.append(f"Top-holder concentration must be below {security_cfg.security_max_top_holders_pct * 100}%")
         if security.lp_locked_pct is not None and security.lp_locked_pct < cfg.min_lp_locked_pct:
             failures.append(f"LP locked below {cfg.min_lp_locked_pct}%")
         for field in ("mint_authority_revoked", "freeze_authority_revoked"):

@@ -204,12 +204,15 @@ def rejection_breakdown(decisions):
     """Count structured evaluator failures, not substrings from evidence narratives."""
     reasons, combinations = Counter(), Counter()
     only_age = only_security_missing = 0
+    missing_security_data = failed_security_check = 0
     security_fields = {"score", "lp_locked_pct", "mint_authority_revoked", "freeze_authority_revoked", "top_holder_concentration_pct"}
     for d in decisions:
         failures = d.get("failure_reasons", [])
         missing = set(d.get("missing_fields", []))
         if d["decision"] not in ("REJECT", "WATCH"):
             continue
+        missing_security_data += bool(missing & security_fields)
+        failed_security_check += any(f.startswith(("RugCheck score", "LP locked below", "Top-holder concentration", "Security disagreement:")) or "active authority" in f for f in failures)
         categories = set()
         for failure in failures:
             if failure.startswith("Pool age outside"):
@@ -222,6 +225,10 @@ def rejection_breakdown(decisions):
                 categories.add("lp_locked")
             elif "active authority" in failure:
                 categories.add("active_authority")
+            elif failure.startswith("Top-holder concentration"):
+                categories.add("top_holder_concentration")
+            elif failure.startswith("Security disagreement:"):
+                categories.add("security_disagreement")
             elif failure.startswith("liquidity_usd below"):
                 categories.add("liquidity")
             elif failure.startswith("volume_24h_usd below"):
@@ -237,6 +244,7 @@ def rejection_breakdown(decisions):
         only_age += categories == {"pool_age"}
         only_security_missing += bool(missing) and missing <= security_fields and all(
             f.startswith("Missing/unverified data:") for f in failures) and bool(failures)
-    return dict(by_reason=dict(sorted(reasons.items())), combinations=dict(sorted(combinations.items())),
+    return dict(missing_security_data=missing_security_data, failed_security_check=failed_security_check,
+                by_reason=dict(sorted(reasons.items())), combinations=dict(sorted(combinations.items())),
                 only_pool_age=only_age, only_missing_rugcheck_authority=only_security_missing,
                 note="Multi-label counts; ONLY means no other evaluated failure. Hard-filter failures skip volume-profile evaluation, so ONLY is not proof of buy eligibility.")

@@ -157,3 +157,46 @@ Each source can succeed, degrade, fail or be skipped. A failed source is logged 
 The dashboard retains the prominent paper-only banner and shows candidate sources, source health/counts, and the latest cycle's `rejection_breakdown`. Multi-label reason counts and combinations distinguish pool age, security/authority missing data, liquidity, volume, transaction ratio and other gates. `only_pool_age` and `only_missing_rugcheck_authority` mean ONLY the evaluated gates: hard-screen failures skip volume-profile confirmation, so these counts do not prove the candidate would otherwise be a BUY. Missing non-security fields are separate failures.
 
 All strategy/risk defaults remain unchanged, including RugCheck score 500 (lower is better), LP lock 80%, liquidity $10,000, 24h volume $25,000, buys/sells 1.1, maximum pool age 72 hours, and stop fraction 0.15. Mandatory VAH/VAL volume-profile confirmation and fail-closed unknown data remain mandatory. Trending pools are often older than 72 hours and will legitimately fail age screening. Existing cycle JSON/proposal persistence is used; no new table is required. Offline tests pin real response projections and use mocked transports; tests must never call live APIs.
+
+
+## Onchain primary security (paper research only)
+
+### Forensic evidence, 2026-11-10
+The collector used keyless GET https://api.rugcheck.xyz/v1/tokens/{mint}/report/summary. For three mints in cycle 5c176f7d-22db-462b-b2b4-96bf2d817b5b (finished 14:19:48 UTC), stored mint/freeze/concentration were all null. Each raw summary genuinely omitted mintAuthority, freezeAuthority and topHolders; the existing parser already distinguishes absent keys from explicit null. This is an endpoint/data-shape gap, not a lost-null parsing bug. Full GET /report returns explicit null authorities and 20 topHolders for each sample:
+
+| Sample | Mint | Summary score | Stored LP % | Full authority values |
+|---|---|---:|---:|---|
+| AICoin | B9FgqHbtccsgcL6YPfUhNd81qveNtrTbsfLvcjxtpump | 1 | 94.6695026022904 | mint=null, freeze=null |
+| FAIR | FairDR2UmRqHxsVPdPcetePCjFaDqVYv3oQX9fcQTpTg | 1 | 82.94435947092916 | mint=null, freeze=null |
+| DACITYCOIN | 76indaHnwAuKrK2oBpBcPsVe1jRbYHCRYDsYuJ1MVys4 | 1 | 99.98315786706333 | mint=null, freeze=null |
+
+The enabled enrichment reads /report for comparison without overriding summary score or LP. Explicit-null and nested-token parsing remain supported and regression-tested. Raw projections and original summary assessment are persisted in security_evidence and each decision proposal.
+
+### Contracts and exact method
+Use only read-only finalized Solana mainnet JSON-RPC, no wallet, signer, exchange API, key or paid service. Official contracts: https://solana.com/docs/rpc/http/getaccountinfo, https://solana.com/docs/rpc/http/gettokenlargestaccounts, https://solana.com/docs/rpc/http/gettokenaccountsbyowner.
+
+1. getAccountInfo(mint, jsonParsed) must be a non-executable initialized SPL Token or Token2022 mint with explicit mintAuthority/freezeAuthority keys, positive integer supply and decimals. Explicit null = revoked/pass; valid non-null address = active/reject; absent/invalid = unknown/reject. Zero supply (including native wrapped SOL mint's observed zero supply) cannot be a denominator.
+2. getTokenAccountsByOwner(candidate pool address, mint, jsonParsed) identifies that pool's token accounts and validates parsed owner/mint/program. **Not all AMMs use the pool address as vault authority.** Empty/unidentified result means concentration unverifiable, not zero. No guessed vault address, offchain-only vault or silent inclusion.
+3. Query the same mint's token accounts owned by known incinerator 1nc1nerator11111111111111111111111111111111; exclude those accounts and the literal incinerator address. No other alleged burn addresses are assumed.
+4. getTokenLargestAccounts returns at most 20 token ACCOUNT addresses, NOT beneficial owners. Validate unique addresses, raw integer balances, ordering, decimals and sum <= supply. Exclude identified candidate-pool accounts and the incinerator accounts, then sum the largest N remaining balances / unchanged total mint supply * 100. Do not subtract exclusions from supply. If 20 returned accounts leave fewer than N after exclusions, the truncated list cannot settle top N: unverifiable/reject. Fewer than 20 is treated as the complete nonzero list. N is constrained 1..20. Integer arithmetic is used before the final percentage division.
+5. All read slots must be within 150 slots. These are nearby finalized snapshots, not an atomic single-slot audit. No cross-cycle evidence reuse. Token2022 extensions (transfer fees, permanent delegates etc.) are not a comprehensive security audit.
+
+Onchain values alone are primary for the three fields. Enabled mode never substitutes RugCheck when onchain is missing. When both provide a comparable fact and disagree, effective field becomes missing AND Security disagreement explicitly rejects. Full RugCheck concentration is recomputed with the same N/exclusions/denominator, never compared with its differently-defined aggregate. A comparison that cannot be made is labeled unverifiable. Existing score, LP, market/risk/volume-profile gates remain unchanged; missing values still reject.
+
+### Configuration and rate discipline
+Set these optional non-secret Render environment variables; defaults work without new secrets:
+
+| Name | Default | Meaning |
+|---|---|---|
+| SECURITY_ONCHAIN_ENABLED | true | false restores original RugCheck-only behavior; missing still rejects, never bypass |
+| SECURITY_MAX_TOP_HOLDERS_PCT | 0.50 | Fraction of supply; strict concentration <50%, equality rejects |
+| SECURITY_TOP_HOLDERS_N | 10 | Top eligible token accounts, 1..20 |
+| SOLANA_RPC_URL | https://api.mainnet-beta.solana.com | Only verified official keyless mainnet endpoints allowed (also api.mainnet.solana.com) |
+| SOLANA_RPC_CYCLE_BUDGET | 24 | HTTP attempts, including retries, hard cap per cycle (1..100) |
+| SOLANA_RPC_RETRIES | 1 | Additional attempts per RPC (0..2), bounded backoff <=10s |
+
+The 0.50 maximum is the explicitly requested conservative policy default, **not an empirical calibration from successful largest-account live responses**. No previous threshold is relaxed. Liquidity/volume/age preliminary rejection uses the same strategy thresholds before RPC spending; skipped candidates keep unknown onchain fields. One client/cache per cycle caches successes and failures. At most four distinct RPC calls per complete candidate plus bounded retries; budget exhausted, 429, transport, invalid JSON/result and missing vaults are recorded loudly per candidate. SECURITY_SOURCES, PAPER_DECISION and REJECTION_BREAKDOWN logs plus dashboard provenance expose calls/budget/errors/source counts and separate missing_security_data from failed_security_check (overlapping multi-label counts). Persistence uses existing report/proposal JSON; no schema migration.
+
+Observed browser probes: real mint and pool-owner requests returned200 for mint 6sGK9xX2wSsMiUTTo3xZBKe7fcydF3rtQnSGtKJMpump (supply 1000000000000000, decimals6, both authorities null), and owner-query returned account 9LSQizvrMgMeUq5BuZQaNSSwdox2x8NmYvmk6pJKPWhe owned by E3rYVe57SbyhvZHZnjwh7L1Wd74vyk5M3CRFkeSj6wdQ. getTokenLargestAccounts returned429 with 'Too many requests for a specific RPC call' at both official endpoints. PublicNode returned403 'Indexed requests require a personal token', so it is not configured as a fallback. These observations are not a guaranteed universal quota. A keyless endpoint may remain unable to deliver concentration; that is a loud data gap and no BUY, never fabricated data.
+
+Offline tests distinguish captured real response projections/error fixtures from synthetic arithmetic edge cases. They never call the network. First-observing-cycle paper fills and existing fees/slippage/risk stops remain unchanged. All-rejected cycles can be correct; a verified authority is progress, not permission to trade without the remaining verified gates.

@@ -16,6 +16,8 @@ from act.strategy import StrategySettings, evaluate
 
 @pytest.mark.parametrize("accept", [True, False])
 def test_cycle_refreshes_remote_history_and_persists_decisions(tmp_path, monkeypatch, accept):
+    # Legacy lifecycle regression; enabled enrichment has dedicated offline tests.
+    monkeypatch.setenv("SECURITY_ONCHAIN_ENABLED", "false")
     at = datetime.now(timezone.utc)
     pool = TokenDiscovery(symbol="TEST", mint_address="mint", pool_address="pool",
                           first_seen_at=at - timedelta(hours=1), price_usd=2,
