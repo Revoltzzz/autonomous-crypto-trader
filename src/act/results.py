@@ -138,13 +138,15 @@ def trend_panel(reports):
                       + '<h3>Security coverage per field / source</h3>' + raw(row["security"]) + '</details>')
         breakdown = row["rejections"] or {}
         numeric = {k: v for k, v in breakdown.items() if type(v) in (int, float) and v >= 0}
+        numeric.update({"reason: " + k: v for k, v in (breakdown.get("by_reason") or {}).items()
+                        if type(v) in (int, float) and v >= 0})
         maximum = max(numeric.values(), default=1) or 1
         output.append('<p>' + text(row["timestamp"]) + '</p>')
         for label, count in numeric.items():
             output.append('<div>' + text(label) + ': ' + text(count)
                           + f'<div style="background:#38bdf8;height:8px;width:{100 * count / maximum:.2f}%"></div></div>')
-        if not numeric:
-            output.append(raw(row["rejections"]))
+        output.append("<details><summary>All rejection labels and combinations</summary>"
+                      + raw(row["rejections"]) + "</details>")
     return ''.join(output) + '</section>'
 
 
