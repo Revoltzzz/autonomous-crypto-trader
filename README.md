@@ -200,3 +200,99 @@ The 0.50 maximum is the explicitly requested conservative policy default, **not 
 Observed browser probes: real mint and pool-owner requests returned200 for mint 6sGK9xX2wSsMiUTTo3xZBKe7fcydF3rtQnSGtKJMpump (supply 1000000000000000, decimals6, both authorities null), and owner-query returned account 9LSQizvrMgMeUq5BuZQaNSSwdox2x8NmYvmk6pJKPWhe owned by E3rYVe57SbyhvZHZnjwh7L1Wd74vyk5M3CRFkeSj6wdQ. getTokenLargestAccounts returned429 with 'Too many requests for a specific RPC call' at both official endpoints. PublicNode returned403 'Indexed requests require a personal token', so it is not configured as a fallback. These observations are not a guaranteed universal quota. A keyless endpoint may remain unable to deliver concentration; that is a loud data gap and no BUY, never fabricated data.
 
 Offline tests distinguish captured real response projections/error fixtures from synthetic arithmetic edge cases. They never call the network. First-observing-cycle paper fills and existing fees/slippage/risk stops remain unchanged. All-rejected cycles can be correct; a verified authority is progress, not permission to trade without the remaining verified gates.
+
+
+## Concentration fallback (2026-11-10)
+
+This section updates the PR #3 concentration policy above. PAPER ONLY; no thresholds,
+wallets, exchange APIs, paid services, signup or signing added. Authorities remain
+onchain-primary, with explicit-null and disagreement rules unchanged.
+
+### Real provider verification before implementation
+
+Read-only JSON-RPC POST getTokenLargestAccounts, finalized, was tested against both
+B9FgqHbtccsgcL6YPfUhNd81qveNtrTbsfLvcjxtpump and
+6sGK9xX2wSsMiUTTo3xZBKe7fcydF3rtQnSGtKJMpump on 2026-11-10.
+The official contract returns up to 20 ranked token ACCOUNT addresses with raw amount,
+decimals and context: https://solana.com/docs/rpc/http/gettokenlargestaccounts.
+
+| Endpoint | Captured observations | Adoption |
+|---|---|---|
+| https://api.mainnet-beta.solana.com | Both probes HTTP403, JSON error code403, Access forbidden | Existing endpoint retained; no successful largest response in this session |
+| https://api.mainnet.solana.com | Both HTTP403, Access forbidden | Existing allowed endpoint; no new success |
+| https://solana-rpc.publicnode.com | HTTP403, code-32602 Indexed requests require a personal token; second HTTP429 code-32005 Rate limit exceeded | Rejected: personal-token restriction, no signup |
+| https://rpc.ankr.com/solana | Both HTTP403, API key is not allowed to access blockchain, code-32052 | Rejected: no working keyless response |
+| https://solana.drpc.org | Both HTTP400, code35 chain is not available on free plan, please upgrade to paid plan | Rejected: paid restriction |
+| https://solana.public-rpc.com | Navigation ERR_CERT_AUTHORITY_INVALID; POST failed to fetch | Unverified, not adopted |
+
+No new provider produced a captured successful largest-accounts response, so **no
+allowlist expansion or provider-failover setting is introduced**. Phase B stands alone.
+These are browser observations, not universal quotas; earlier deployed RPC429 may differ
+from browser403. No request-rate ceiling or permanent availability is inferred.
+Existing RPC retries (1), shared per-cycle HTTP-attempt budget (24), success/failure cache,
+and loud per-candidate errors remain unchanged. No unverified endpoint is silently used.
+
+### RugCheck structure and limitations
+
+Full reports were read at https://api.rugcheck.xyz/v1/tokens/{mint}/report for the two
+mints above and So11111111111111111111111111111111111111112. AICoin returned 20
+rows but totalHolders=6102: **a truncated ranked prefix, not a complete census**.
+Each row has address, owner, raw amount, decimals, pct, uiAmount, uiAmountString,
+and insider. Its first address J39A9AP1P2EhY9Zw7JUfe1R55AmMYAa2L5SudfhRiikb
+matches candidate market liquidityA; owner is pool
+CmKXFUCW8CSnmqTVHBrK3E6sZk4fLeeB24yia7GyXeWt. This corroborates token-account
+semantics, NOT owner aggregation or beneficial-owner concentration. Both methods
+therefore measure top N eligible token accounts, not distinct humans/wallet owners.
+The 6sGK report returned topHolders=[] despite positive supply and a reported pool
+balance; wrapped SOL returned topHolders=null and zero supply. Both are unavailable,
+**never zero concentration**. Observed pct and uiAmount are not arithmetic inputs;
+one AICoin uiAmount disagreed with amount/uiAmountString. Use raw integer amounts only.
+
+Fallback computes 100 * sum(top N eligible raw account balances) / raw mint supply.
+Exclude candidate-pool-owned token accounts and incinerator-owned accounts, plus literal
+1nc1nerator11111111111111111111111111111111; never reduce supply by excluded amounts.
+Candidate pool identity must match a report market pubkey, the matching mint side,
+and that side's liquidity vault account owner/mint. Matching holder/vault amount and
+owner must agree. Unknown pool/vault identity, duplicate/unsorted addresses, missing owners,
+floats/bools/negative balances, invalid decimals, excess summed balances or invalid supply
+are unavailable. N eligible rows must remain after exclusion; a shorter prefix is NOT
+assumed complete. Fewer than N is accepted only when all listed balances sum to supply,
+proving no positive balance remains unlisted. No owner-aggregated pct is substituted.
+
+### Precedence, config and audit
+
+| Setting | Default | Policy |
+|---|---|---|
+| SECURITY_CONCENTRATION_FALLBACK | rugcheck | off restores PR #3 no-fallback behavior |
+| SECURITY_CONCENTRATION_TOLERANCE_PP | 0.5 | Absolute percentage points, bounded 0..1; not a threshold relaxation |
+
+ConcentrationSettings in src/act/security.py inherits all existing SecuritySettings.
+Onchain account concentration is PRIMARY whenever available. Valid normalized full-report
+concentration is fallback only when primary is unavailable. Both valid values are always
+compared, even with fallback off. Difference greater than tolerance rejects; crossing the
+configured rejection boundary rejects even within tolerance. Equality to the 50% threshold
+still rejects. Authority disagreements still reject without tolerance. Summary concentration
+aggregates are not comparable and are ignored for this metric. Missing both rejects as
+missing_security_data; disagreement and excessive concentration retain failed_security_check
+(overlapping missing/failed labels may both occur on disagreement).
+
+SECURITY_ONCHAIN_ENABLED=false still returns pre-onchain assessments unchanged, never a
+bypass. The fallback cannot supply missing onchain authorities. Existing preliminary
+liquidity/volume/age rejects skip security requests; skipped values remain unknown.
+No extra RugCheck call is needed: the already-fetched full report is normalized.
+
+security_evidence includes concentration_source (onchain/rugcheck/missing), raw primary
+and fallback values, measure, raw numerator/denominator, exclusions, ranking size, errors,
+tolerance and disagreements. security_source_stats includes concentration_by_source,
+verified/passed/failed counts; dashboard Security provenance renders these existing JSON
+fields and cycle SECURITY_SOURCES/CYCLE_RESULT logs preserve them. Decision proposal JSON
+already persists security_evidence; **no Supabase migration**.
+
+The fallback is provider-attested, not independently slot-verified onchain evidence.
+RugCheck supplies no onchain context slot/freshness guarantee here. detectedAt is preserved
+as provider metadata, not asserted to be the last holder refresh; observation time is recorded.
+Snapshot drift may cause fail-closed disagreement, or unavailable/incomplete reports may
+leave concentration missing. Coverage is not guaranteed and no forced BUY is expected.
+Offline tests pin observed raw-holder projections and label synthetic mutations explicitly;
+existing RPC budget/cache/read-only/retry and rejection-breakdown tests remain in place.
+Provider failover tests/settings are inapplicable because no new provider was adopted.
