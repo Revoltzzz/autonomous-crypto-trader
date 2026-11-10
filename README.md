@@ -121,3 +121,39 @@ Pydantic `VolumeProfileSettings` reads these environment overrides (no secrets):
 | `VOLUME_PROFILE_REQUIRED_FOR_BUY` | `true` | Mandatory safety invariant: `false` is rejected, never a bypass |
 
 The read-only dashboard keeps **SIMULATED - PAPER TRADING ONLY** prominent and shows per-candidate POC/VAH/VAL, target/actual VA%, price position, candle count, timeframe and unavailable/not-attempted status. Synthetic hand-computed tests are explicitly offline fixtures, not live evidence.
+
+## Multi-source discovery (paper only)
+
+Discovery uses independent, ordered keyless public adapters. Contracts were checked against real unauthenticated JSON on 2026-11-10:
+
+- GeckoTerminal: `https://api.geckoterminal.com/api/v2/networks/solana/new_pools?include=base_token` and `/api/v2/networks/solana/trending_pools?include=base_token`. Pool/base-token addresses, creation time, available liquidity, volume and transaction counts retain the existing strict parser.
+- DexScreener: `https://api.dexscreener.com/token-profiles/latest/v1` and `/token-boosts/latest/v1`, filtering `chainId=solana`, then `/token-pairs/v1/solana/{tokenAddress}`. Pair address, base/quote symbols, creation timestamp, price, volume, liquidity and transactions come directly from DexScreener, not a fabricated GeckoTerminal lookup. Missing liquidity remains unknown and fails the existing gate. A real checked pair sample is `/token-pairs/v1/solana/86eESqktK5qmPyZ5mHPoELR32uj9YYa4uB4iMhp6pump`. Boosted/promoted tokens receive no safety exemption.
+- Not adopted: DexScreener search for `SOL` is ambiguous and includes other chains. CoinGecko `/api/v3/search/trending` and `/coins/list?include_platform=true` returned keyless JSON, but trending lacks mint addresses and requires an expensive platform mapping plus pool resolution. CoinGecko market context remains independent; there is no CoinGecko discovery adapter or enable flag.
+
+These observations establish access and response shapes, not a permanent availability promise. No 429 occurred during contract sampling; no observed request-rate threshold is claimed. Existing bounded Retry-After-aware retries apply. Fetching is sequential: two GeckoTerminal requests and up to two Dex feeds plus five token lookups per feed by default, before retries. Missing or malformed data is never invented.
+
+### Configuration and merge policy
+
+Pydantic settings read environment overrides; defaults need no Render environment changes:
+
+| Environment variable | Default |
+| --- | --- |
+| `DISCOVERY_MAX_CANDIDATES` | `40` (1..100) |
+| `DISCOVERY_ENABLE_GECKOTERMINAL` | `true` |
+| `DISCOVERY_ENABLE_DEXSCREENER` | `true` |
+| `DISCOVERY_GECKOTERMINAL_NEW_LIMIT` | `15` (1..20) |
+| `DISCOVERY_GECKOTERMINAL_TRENDING_LIMIT` | `10` (1..20) |
+| `DISCOVERY_DEXSCREENER_PROFILES_LIMIT` | `10` (1..30) |
+| `DISCOVERY_DEXSCREENER_BOOSTS_LIMIT` | `10` (1..30) |
+| `DISCOVERY_TOKEN_LOOKUP_LIMIT` | `5` per Dex feed (1..10) |
+| `DISCOVERY_SOURCE_PRIORITY` | `geckoterminal_new,geckoterminal_trending,dexscreener_profiles,dexscreener_boosts` |
+
+Priority must contain every adapter exactly once. Within priority, descending available volume, descending liquidity, then addresses break ties deterministically. Deduplication uses both pool and base-token mint. The highest-priority canonical pool keeps its own metrics; sources are unioned and alternate pool addresses recorded, never splicing metrics from different pools. Conflicting mint identities for one pool fail loudly. The global cap is applied only after deduplication, bounding downstream security work at 40 candidates by default. Per-source limits bound normalized outputs; feed length is not a promise of usable Solana pools.
+
+Each source can succeed, degrade, fail or be skipped. A failed source is logged and persisted while others continue. All enabled sources failing (or no enabled sources) raises a loud cycle failure, never synthetic candidates. CoinGecko context failure does not suppress independent discovery. Cycle JSON contains `discovery_stats` with per-source normalized returned, deduplicated, kept-after-cap and errors, plus aggregate unique/duplicate/cap counts. Sources carried by a canonical candidate can each count it as kept; these are provenance memberships, not additive unique counts. Decisions retain sources, canonical pool and alternate pools in their proposal JSON alongside structured failure reasons.
+
+### Rejection observability and unchanged gates
+
+The dashboard retains the prominent paper-only banner and shows candidate sources, source health/counts, and the latest cycle's `rejection_breakdown`. Multi-label reason counts and combinations distinguish pool age, security/authority missing data, liquidity, volume, transaction ratio and other gates. `only_pool_age` and `only_missing_rugcheck_authority` mean ONLY the evaluated gates: hard-screen failures skip volume-profile confirmation, so these counts do not prove the candidate would otherwise be a BUY. Missing non-security fields are separate failures.
+
+All strategy/risk defaults remain unchanged, including RugCheck score 500 (lower is better), LP lock 80%, liquidity $10,000, 24h volume $25,000, buys/sells 1.1, maximum pool age 72 hours, and stop fraction 0.15. Mandatory VAH/VAL volume-profile confirmation and fail-closed unknown data remain mandatory. Trending pools are often older than 72 hours and will legitimately fail age screening. Existing cycle JSON/proposal persistence is used; no new table is required. Offline tests pin real response projections and use mocked transports; tests must never call live APIs.
