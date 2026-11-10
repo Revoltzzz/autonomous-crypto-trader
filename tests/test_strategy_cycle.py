@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from act.config.settings import Settings
 from act.domain.models import SecurityAssessment, TokenDiscovery
+from act.discovery import Candidate
 from act.orchestrator import cycle
 from act.paper.ledger import PaperLedger
 from act.strategy import StrategySettings, evaluate
@@ -40,6 +41,9 @@ def test_cycle_refreshes_remote_history_and_persists_decisions(tmp_path, monkeyp
 
         def save(self, payload, ledger):
             assert ledger["history"][:len(remote.history)] == remote.history
+            assert payload["decisions"][0]["sources"] == ["dexscreener_profiles"]
+            assert payload["decisions"][0]["proposal"]["discovery"]["sources"] == ["dexscreener_profiles"]
+            assert "rejection_breakdown" in payload and "discovery_stats" in payload
             saved.append((payload, ledger))
 
     class Collector:
@@ -54,20 +58,19 @@ def test_cycle_refreshes_remote_history_and_persists_decisions(tmp_path, monkeyp
 
     class Markets(Collector):
         async def fetch(self):
-            # Simulate another deployment finalizing AFTER initial restoration.
             remote.account_state({})
             return []
 
-    class Pools(Collector):
-        async def fetch(self):
-            return [pool]
+    async def offline_discover(*, options, stats):
+        stats["dexscreener_profiles"] = dict(status="success", returned=1, kept_after_cap=1)
+        return [Candidate(**pool.model_dump(), sources=["dexscreener_profiles"])]
 
     class Security(Collector):
         async def fetch(self, mint):
             return security
 
     monkeypatch.setattr(cycle, "CoinGeckoCollector", Markets)
-    monkeypatch.setattr(cycle, "GeckoTerminalCollector", Pools)
+    monkeypatch.setattr(cycle, "discover", offline_discover)
     monkeypatch.setattr(cycle, "RugCheckCollector", Security)
     settings = Settings(_env_file=None, ledger_path=tmp_path / "local.json",
                         report_dir=tmp_path / "reports")
