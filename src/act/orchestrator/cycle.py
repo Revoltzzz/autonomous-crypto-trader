@@ -8,6 +8,7 @@ from act.collectors.coingecko import CoinGeckoCollector
 from act.collectors.geckoterminal import GeckoTerminalCollector
 from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
+from act.discovery import discover, rejection_breakdown
 from act.logging_setup import get_logger, setup_logging
 from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
@@ -25,6 +26,7 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     log = get_logger(__name__)
     report = {"cycle_id": str(uuid4()), "started_at": now(), "status": "running",
               "paper_only": True, "steps": [], "markets": [], "discoveries": [],
+              "discovery_stats": {}, "rejection_breakdown": {},
               "decisions": [], "paper_positions": [], "paper_trades": [],
               "assessments": {}, "collectors": {name: {"status": "skipped"}
               for name in ("CoinGecko", "GeckoTerminal", "RugCheck")}}
@@ -48,15 +50,20 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                    "retries": settings.http_retries}
         active = "CoinGecko"
         step("fetch CoinGecko markets")
-        async with CoinGeckoCollector(**options) as collector:
-            report["markets"] = [m.model_dump(mode="json") for m in await collector.fetch()]
-        report["collectors"][active] = {"status": "success"}
-        active = "GeckoTerminal"
-        step("fetch verified GeckoTerminal /api/v2/networks/solana/new_pools; 429 Retry-After/backoff handling")
-        async with GeckoTerminalCollector(**options) as collector:
-            pools = await collector.fetch()
-            report["discoveries"] = [p.model_dump(mode="json") for p in pools]
-        report["collectors"][active] = {"status": "success"}
+        try:
+            async with CoinGeckoCollector(**options) as collector:
+                report["markets"] = [m.model_dump(mode="json") for m in await collector.fetch()]
+            report["collectors"][active] = {"status": "success"}
+        except Exception as exc:
+            report["collectors"][active] = {"status": "failed", "error": str(exc)}
+            log.exception("Market context unavailable; continuing independent pool discovery")
+        active = "Discovery"
+        step("fetch ordered keyless discovery sources; bounded Retry-After-aware retries")
+        pools = await discover(options=options, stats=report["discovery_stats"])
+        report["discoveries"] = [p.model_dump(mode="json") for p in pools]
+        report["collectors"][active] = {"status": "success", "candidates": len(pools)}
+        gt = report["discovery_stats"].get("geckoterminal_new", {})
+        report["collectors"]["GeckoTerminal"] = {"status": gt.get("status", "skipped")}
         active = "RugCheck"
         step("fetch RugCheck security reports")
         async with RugCheckCollector(**options) as collector:
@@ -77,14 +84,11 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
         snapshot = None
         if ledger is not None:
             try:
-                # Refresh after collection: an old deploy may have finalized while we fetched.
-                # The database prefix guard still rejects any later concurrent conflict.
                 ledger = await asyncio.to_thread(restore_ledger, store, settings)
                 step(f"position management: refresh quotes -> mark -> exits ({len(ledger.positions)} open positions)")
                 management = await manage_positions(ledger, settings, client=client)
                 report["position_management"] = management
                 step("evaluate every candidate; SIMULATED PAPER TRADING ONLY")
-                # Failed collection never opens a trade; missing assessments fail closed.
                 assessments = report["assessments"] if failure is None else {}
                 profile_at = datetime.now(timezone.utc)
                 step("volume profiles: hard-filter preflight -> cached OHLCV confirmation")
@@ -102,8 +106,20 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["decisions"], prices = run_strategy(
                     pools, assessments, ledger, settings, report["cycle_id"],
                     position_prices=management["prices"], at=profile_at, volume_profiles=profiles)
+                provenance = {p.mint_address: p for p in pools}
                 for decision in report["decisions"]:
+                    p = provenance[decision["mint_address"]]
+                    decision["sources"] = getattr(p, "sources", ["geckoterminal_new"])
+                    decision["pool_address"] = p.pool_address
+                    decision["proposal"] = dict(decision.get("proposal") or {},
+                        discovery={"sources": decision["sources"], "pool_address": p.pool_address,
+                                   "source_url": p.source_url,
+                                   "alternate_pool_addresses": getattr(p, "alternate_pool_addresses", [])},
+                        failure_reasons=decision.get("failure_reasons", []),
+                        missing_fields=decision.get("missing_fields", []))
                     log.info("PAPER_DECISION %s", json.dumps(decision, allow_nan=False))
+                report["rejection_breakdown"] = rejection_breakdown(report["decisions"])
+                log.info("REJECTION_BREAKDOWN %s", json.dumps(report["rejection_breakdown"]))
                 report["decision_counts"] = {verdict: sum(d["decision"] == verdict
                     for d in report["decisions"]) for verdict in ("BUY", "REJECT", "WATCH")}
                 observations = {p["id"]: p["quote"] for p in management["observations"]}
