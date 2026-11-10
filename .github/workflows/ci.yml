@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: [main, concentration-fallback]
+    branches: [main, concentration-fallback, results-dashboard]
   pull_request:
     branches: [main]
 permissions:
