@@ -157,6 +157,10 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <pre>{safe(json.dumps(result.get("decision_counts", {}), indent=2))}</pre>
 <pre>{safe(json.dumps(result.get("decisions", []), indent=2))}</pre></section>
 <section id="discovery"><h2>Per-source discovery stats</h2><pre>{safe(json.dumps(result.get("discovery_stats", {}), indent=2))}</pre></section>
+<section id="security-provenance"><h2>Security provenance: onchain primary</h2>
+<p>Null authority means renounced only when explicitly returned by a verified mint account. Missing or disagreeing data never permits a BUY. Concentration counts token accounts, not beneficial owners.</p>
+<pre>{safe(json.dumps(result.get("security_source_stats", {}), indent=2))}</pre>
+<details><summary>Raw field values, sources, exclusions and RPC failures</summary><pre>{safe(json.dumps(result.get("security_evidence", {}), indent=2))}</pre></details></section>
 <section id="rejections"><h2>Rejection-reason breakdown</h2><pre>{safe(json.dumps(result.get("rejection_breakdown", {}), indent=2))}</pre></section>
 <section><h2>Collector outcomes</h2><pre>{safe(json.dumps(result.get("collectors", {}), indent=2))}</pre></section>
 <section><h2>Security check outcomes</h2><pre>{safe(json.dumps(result.get("assessments", {}), indent=2))}</pre>
