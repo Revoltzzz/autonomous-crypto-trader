@@ -296,3 +296,22 @@ leave concentration missing. Coverage is not guaranteed and no forced BUY is exp
 Offline tests pin observed raw-holder projections and label synthetic mutations explicitly;
 existing RPC budget/cache/read-only/retry and rejection-breakdown tests remain in place.
 Provider failover tests/settings are inapplicable because no new provider was adopted.
+
+
+## Results dashboard (presentation only, 2026-11-10)
+
+The existing `/` service route is server-rendered HTML with inline SVG/CSS, no CDN, JavaScript dependency or frontend build. `/health` and `/status` remain read-only. There are no trading-state mutation endpoints. Strategy, security filters, thresholds, executor and safety guards are unchanged.
+
+Six panels:
+1. **Paper equity curve** copies the existing ledger-derived `paper_account` into `equity_snapshot` in each cycle report (equity, cash, position count, timestamp, valuation status). The existing atomic `persist_paper_cycle` stores this JSON; no migration. Snapshots start at the first cycle of this release, not before; no backfill. A single observation is a point; a flat portfolio stays flat. Null valuations create gaps, not zero or last-known marks. The exact timestamp/data table accompanies the chart.
+2. **Open positions** uses existing persisted cycle `paper_positions`: entry, observed quote, net unrealized P&L, stop/target and distances, age, stale flag, source and observation timestamps. Explicit no-open-positions state. These are cycle marks, not streaming quotes.
+3. **Trade history** uses the full `paper_trades` ledger view, never a winning-trade-only selection: entry/exit, net P&L, total fees, reason, timestamps and display-only holding duration. Slipped prices are recorded; separate historic slippage-dollar amounts / entry quote are not persisted and are unavailable, not reconstructed. No closed trades is explicit.
+4. **Decision log** displays up to 200 recent candidates from 30 durable cycles, with token/pool, verdict, all reasons and missing fields, expandable per-field onchain/RugCheck/missing provenance and raw authorities/concentration values. Full stored proposal/discovery/volume-profile evidence remains inspectable.
+5. **Risk / cycle health** shows ledger account exposure and cash, observed positions vs configured cap, RPC calls/budget, effective STRATEGY_* and SECURITY_* values plus immutable risk caps captured with that cycle (never secrets). Cycle timestamp/status and persisted source statistics/errors are visible. Explicit per-provider 429/retry totals were not persisted; they are unavailable rather than inferred from error strings.
+6. **Cycle / rejection trends** shows the last 30 stored cycles, discovery seen/kept/dedup stats, multi-label rejection bars with missing_security_data distinct from failed_security_check, and expandable security coverage per field/source. Missing historic stats remain unknown, not zero.
+
+### Data and free-tier limits
+
+After each cycle the service makes one bounded read of `cycles.report` ordered by completed_at descending (limit 30), then serves the in-memory view without per-request provider/database calls. Durable reports retain snapshots beyond the display window. Decision HTML is capped at 200 candidates; details collapse raw evidence for mobile reading. All closed ledger trades remain visible. Local mode only keeps the recent cache for the process lifetime; Render sleeps/redeploys lose local files but configured Supabase reports survive. Until the first cycle completes, data is unavailable. A failed history read clears the history view, logs RESULTS_HISTORY_FAILED and shows a loud banner / health field; no synthetic fallback. Current account marks are as of the displayed cycle, not live market valuations.
+
+No new environment variables, API keys, external services, paid resources or Supabase schema changes are required. Existing Render auto-deploy applies after merge. Offline results tests cover snapshot copying/null valuations, no backfill, flat and gap charts, bounded reads, all six sections, read-only routes, escaping/capping, stored rejection labels, duration and preservation of losses/fees; no network or lifespan is started by those tests.
