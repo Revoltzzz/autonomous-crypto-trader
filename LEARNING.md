@@ -20,7 +20,10 @@ proposal/intelligence block in its original cycle. Learning adds a reference
 `learning_session_id` to each evaluation. A mint's first evaluation starts one
 session; subsequent evaluations reference it rather than resetting its horizons.
 The session retains original decision/cycle IDs, verdict, reasons, pool, baseline
-price/liquidity and baseline quote source/time. Follow-up events retain session,
+price/liquidity and baseline quote source. Existing TokenDiscovery does not retain
+a provider quote timestamp: `quote_at` remains null/unknown, with explicit status,
+learning baseline capture time and original cycle start as collection context.
+Pool first_seen_at is not misrepresented as quote time. Follow-up events retain session,
 mint/pool, due and observation timestamps, lateness, source URL/parameters,
 request/fetch timestamps, HTTP status, each attempt and returned evidence. This
 continues the immutable-input/decision/provenance replay pattern reviewed from
@@ -99,7 +102,8 @@ selected. A missing/index-absent pool never gets a fabricated -100% return.
 
 Per cycle, derive solely from that cycle's stored decisions/discoveries/assessments
 and labeled events: TA count/min/median/max/missing, market-field coverage, security
-value counts by effective source, LP-lock distribution/source, rejection reason
+value counts by effective source and raw onchain/RugCheck source values (including
+missing), LP-lock distribution/source, rejection reason
 counts, field missingness, and return count/min/median/max per horizon. The UI
 renders these stored aggregates instead of recalculating them on each request.
 Calibration by rejection reason uses active plus latest 200 terminal sessions;
@@ -108,7 +112,7 @@ The table is descriptive, not a recommendation, and is explicitly small-n warned
 
 Returns are `(observed USD price / baseline USD price - 1) * 100`; liquidity change
 is analogous. The baseline is the decision's existing discovery quote, not a new
-synchronous tradeable fill. Its original timestamp/source is preserved, and age,
+synchronous tradeable fill. Its source and collection context are preserved, but quote age is unknown;
 provider sampling differences, fees/slippage and lack of executable liquidity
 mean these labels are **not realized strategy expectancy**. Missing values are
 null, never neutral zeros. Actual observation time/lateness is always retained.
