@@ -17,6 +17,65 @@ python -m act.orchestrator.cycle
 ```
 No API keys are required by Milestone 1. Set SUPABASE_URL and SUPABASE_SERVICE_KEY together in Render environment variables for durable persistence; both may be empty for local mode. Optional environment overrides: PAPER_ONLY (must be true), LEDGER_PATH, REPORT_DIR, HTTP_TIMEOUT, HTTP_RETRIES, FEE_PCT, SLIPPAGE_PCT. Never commit .env or secrets. Tests use mocked HTTP transports and temporary ledgers, not the network.
 
+## Evidence-first intelligence (ta-v1; gates deliberately OFF)
+
+This layer measures and displays evidence **after** the unchanged strategy has evaluated/executed its paper decision. It does not reject, score, resize or approve a trade. Existing security, market, volume-profile, risk and executor semantics are unchanged. Zero BUYs is an honest possible outcome, not a reason to loosen gates.
+
+Configuration (defaults): `INTELLIGENCE_TA_ENABLED=true` computes/records TA; false records disabled/unavailable indicators. `INTELLIGENCE_GATES_ENABLED` defaults false and only false is permitted in this release: there is intentionally no threshold policy to enable. Any future gating requires a reviewed policy/code change, explicit owner-selected thresholds and regression tests. No sentiment collector is enabled and its per-cycle external request budget is **zero**. No paid services, exchange APIs, wallet keys, signup or new dependency.
+
+### Data inventory and reuse
+
+- The existing volume-profile fetcher requests GeckoTerminal `/api/v2/networks/solana/pools/{pool}/ohlcv/minute`, USD/base, limit100, aggregate15 (15m) or5 (5m for young pools/fallback), `include_empty_intervals=false`. Only validated completed candles are used. Its existing min12, freshness checks, retries, fallback and per-cycle cache are unchanged.
+- Crucially, OHLCV is fetched **only after existing hard-filter preflight passes**. TA does not fetch missing candles. Rejects without an existing fetch get unavailable indicators, not invented neutral scores. A cycle can legitimately show TA0/N. This sampling bias must be considered in later threshold research.
+- Previously candle rows were discarded after volume-profile computation; successful profiles now retain those same rows (at most100), exact request params/source URL, fetch/evaluation times and oldest/newest timestamps inside existing cycle JSON. There are no duplicate requests. These are replay inputs, not an executable replay engine or a promise of historical L2 data. Local retention is ephemeral; configured Supabase stores the existing report/proposal JSON without migration.
+- Gecko discovery already retains price, liquidity, 24h volume/transactions and pool creation; additional raw price-change windows were not retained and are not fabricated. DexScreener's already-fetched profile/boost feeds and token-pair responses now retain description, social links present/absent/unknown, boost feed membership/amounts and observation/source provenance. A boost is promotion metadata, not positive sentiment; an omitted boost field is unknown. No verified profile-creation timestamp exists in captured responses: profile age is unavailable, never inferred from pool creation or `updatedAt`.
+- RugCheck summary provides score/risks/security fields; the existing security layer separately requests full reports for eligible candidates and reconciles authorities and topHolders concentration with on-chain evidence. Intelligence does not change its normalization, thresholds or requests. CoinGecko observations remain **market-wide price context, not token sentiment**.
+
+### Indicator definitions
+
+Chronological clean contiguous bars only; gaps, invalid/duplicate/nonfinite rows or absent history make the window unavailable with a reason. No interpolation/resampling/zero-filling. Every indicator stores raw value, availability, reason, minimum bars and observed window size; TA includes schema/computation version, timeframe/bar count and source timestamps. Fractions below are ratios, not percentages.
+
+| Indicator | Definition / minimum bars |
+| --- | --- |
+| RSI14 | Wilder-smoothed gains/losses, first14-change SMA seed; min15. All-flat RSI undefined, rising-only100, falling-only0. |
+| EMA9 / EMA21 | SMA-seeded exponential averages, alpha2/(n+1); min9/21. |
+| EMA slopes | Final EMA / preceding EMA -1 (one bar); min10/22. |
+| EMA relationship | EMA9 / EMA21 -1; min21. |
+| Momentum5 | Last close / close5 intervals earlier -1; min6. |
+| ATR14 normalized | Wilder average of true ranges against previous close (first14 ranges seed) / last close; min15. |
+| Volume ratio5 | Sum last5 volumes / sum preceding5; min10, zero denominator unavailable. |
+| Drawdown | Last close / maximum high of retained window -1; min2. |
+| Bars since POC touch | Completed bars after most recent low<=full-window POC<=high; no touch unavailable. This is descriptive, uses full-window POC and is not a causal historical entry signal. |
+
+`proposal.intelligence` is added to **every evaluated candidate**, preserving existing proposal fields. Cycle `intelligence_stats` counts availability per indicator and reasons; `ta_computed` means at least one indicator available, not all. `elapsed_ms` measures this CPU attachment only, not collection or persistence latency. The dashboard adds an escaped expandable intelligence section; old records explicitly say not recorded. `INTELLIGENCE_STATS` and existing `PAPER_DECISION` logs retain evidence. Synthetic hand-computed tests and mocked persistence/HTTP tests run offline.
+
+### Free/keyless source verification — 2026-11-11
+
+These are captured browser results, not guarantees of availability from every hosting network. No API-key signup or authentication was used.
+
+| Source / probe | Actual result and adoption decision |
+| --- | --- |
+| [Reddit CryptoCurrency JSON](https://www.reddit.com/r/CryptoCurrency/new.json?limit=3), [Solana JSON](https://www.reddit.com/r/solana/new.json?limit=3), [mint search](https://www.reddit.com/search.json?q=HAhZGYQzGHXkbfukyvs3Vj6t7nfqgWUym1LCKRZcpump&limit=3) | Network-security block, no usable JSON; old.reddit Solana route redirected to login. Not adopted; rate budget cannot be verified. |
+| [CoinDesk RSS](https://www.coindesk.com/arc/outboundfeeds/rss/) | Real keyless RSS XML, build2026-11-11 08:43:16UTC. Market news, not evidence of new Solana token coverage. Verified but not adopted as runtime sentiment. |
+| [The Block RSS](https://www.theblock.co/rss.xml) | Real keyless RSS XML, build2026-11-11 07:25:17UTC; Bitmine/ether-loss story. Same scope limit; not runtime sentiment. |
+| [Decrypt RSS](https://decrypt.co/feed) and `?output=rss` | Cloudflare security-verification page, no feed captured; not adopted. |
+| [Dex profiles](https://api.dexscreener.com/token-profiles/latest/v1), [boosts](https://api.dexscreener.com/token-boosts/latest/v1), [recent RINGPAD mint pairs](https://api.dexscreener.com/token-pairs/v1/solana/HAhZGYQzGHXkbfukyvs3Vj6t7nfqgWUym1LCKRZcpump) | Real keyless JSON. RINGPAD profile had description, website and Twitter link; pair response had socials. Adopt only already-collected metadata, **not mentions/sentiment**. No verified profile creation time. |
+
+No genuinely free keyless Solana-mint-to-social-mentions source was verified. Mainstream headlines cannot honestly substitute for brand-new micro-cap coverage. X/Twitter APIs are not used. This release skips new news/sentiment ingestion rather than pretend token coverage or score headlines; sentiment is explicitly unavailable. If a source is adopted later it must first pass real-response/schema/identity verification and gain a bounded budget, retries, cycle cache, source isolation and loud error reporting.
+
+### HFTENGINE reference review (Phase0c)
+
+Read-only review of [mirkovicdev/HFTENGINE](https://github.com/mirkovicdev/HFTENGINE), README, structure, `tools/session.py`, `runner/src/record.rs`, `runner/src/queue.rs` and [LICENSE](https://github.com/mirkovicdev/HFTENGINE/blob/main/LICENSE). It is a Rust/TypeScript hftbacktest replay console for recorded Binance USDT-M futures **backtests, not a live trading bot**. Root license: **MIT, Copyright(c)2026 Antonije Mirkovic**. No code/assets were copied and that repository was not modified. Its hftbacktest submodule and fonts have separate licenses; no assets/dependencies were imported.
+
+- **Adopted now, reimplemented in Python:** retain original observed OHLCV alongside decision snapshots with source/time/params/version, inspired by feed recording/replay sessions; expose state and missing evidence without changing strategy policy. This is groundwork for a future learning/replay engine, not that engine itself.
+- **Roadmap Phase4 (Binance paper research):** evaluate hftbacktest's recorded-L2 replay, queue-position scenarios, latency and fee sensitivity. Still subject to paper-only scope and a separate reviewed design; no Rust service introduced on the free tier.
+- **Modeling honesty now:** continue identifying existing paper fees/slippage as modeled, not measured execution; OHLCV cannot establish orderbook queue, market impact, partial fills or real network latency. HFTENGINE's tutorial rebate/retail fee and laptop/tutorial latency comparisons are scenario examples, not assumptions transferable to Solana. No new fill/fee model or numerical assumptions were adopted.
+- **Inapplicable:** futures market-making grid/L2 queue policies, Binance live connectors, Rust deployment, Windows recording scripts, UI/fonts/assets. Different chain/market/data granularity/stack; importing them would not create honest micro-cap evidence and could violate scope.
+
+### Choosing thresholds later
+
+First accumulate versioned, timestamped availability and indicator distributions across many independent cycles, pools, ages and regimes. Track missingness and preflight selection bias, costs, later observed outcomes and duplicated candidates; avoid look-ahead (including full-window POC), leakage and survivorship bias. Then the owner deliberately selects thresholds using chronological holdout/offline paper replay and documented cost/latency assumptions. Until that reviewed change, all intelligence remains evidence-only. No promise of more trades or profitability.
+
 
 ## Cycle-observed position management (paper only)
 
