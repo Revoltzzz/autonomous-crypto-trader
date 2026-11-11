@@ -98,7 +98,10 @@ def register(state, report, at):
                 "symbol": decision.get("symbol"), "at": decision.get("created_at", at),
                 "verdict": decision["decision"], "reasons": decision.get("failure_reasons", []),
                 "price_usd": pool.get("price_usd"), "liquidity_usd": pool.get("liquidity_usd"),
-                "quote_at": pool.get("discovered_at"), "quote_source": pool.get("source_url"),
+                "quote_at": pool.get("fetched_at") or pool.get("discovered_at"),
+                "quote_time_status": "provider quote timestamp not retained by discovery; null is unknown",
+                "baseline_capture_at": at, "discovery_cycle_started_at": report.get("started_at"),
+                "quote_source": pool.get("source_url"),
                 "observations": {}})
         # Reference original immutable decision + discovery in its cycle, not a replacement snapshot.
         decision["learning_session_id"] = state["seen"][mint]
@@ -212,6 +215,9 @@ def distributions(report, events):
             source = field.get("source", "missing")
             security[key + ":" + source][json.dumps(value, sort_keys=True)] += 1
             missing["security." + key] += int(value is None)
+            for provider in ("rugcheck", "onchain"):
+                observed = field.get(provider + "_value")
+                security[key + ":raw_" + provider][json.dumps(observed, sort_keys=True)] += 1
         reasons.update(d.get("failure_reasons", []))
         for key in d.get("missing_fields", []):
             missing["decision." + key] += 1
@@ -324,7 +330,7 @@ def learning_panel(latest, reports):
                "reasons": s["reasons"], "decision_id": s["decision_id"], "at": s["at"]}
         for h in HORIZONS:
             obs = s["observations"].get(h, {})
-            row[h] = (str(obs.get("return_pct")) + '%; liquidity change ' + str(obs.get("liquidity_change_pct"))
+            row[h] = (str(obs.get("return_pct") if obs.get("return_pct") is not None else "unavailable") + '%; liquidity change ' + str(obs.get("liquidity_change_pct") if obs.get("liquidity_change_pct") is not None else "unavailable")
                       + '%; ' + obs.get("status", "pending"))
         rows.append(row)
     out += '<p>Latest 200 sessions shown; pending checkpoint capped separately. Raw event records remain in durable cycle JSON.</p>'
