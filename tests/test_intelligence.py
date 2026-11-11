@@ -174,10 +174,8 @@ def test_metadata_unknown_absent_present_and_canonical_metrics():
     row["info"]["socials"] = [{"type": "twitter", "url": "https://example.invalid"}]
     p = normalize_pair(row, SOURCES[2])
     assert p.intelligence_metadata["pair:pool"]["socials_present"] is True
-    canonical = p.model_copy(deep=True)
-    canonical.sources = [SOURCES[0]]
-    canonical.liquidity_usd = 999
-    canonical.intelligence_metadata = {}
+    canonical = p.model_copy(deep=True, update={"sources": [SOURCES[0]],
+        "liquidity_usd": 999, "intelligence_metadata": {}})
     kept, _, _ = merge_candidates([canonical, p], SOURCES, 40)
     assert kept[0].liquidity_usd == 999
     assert kept[0].intelligence_metadata == p.intelligence_metadata
