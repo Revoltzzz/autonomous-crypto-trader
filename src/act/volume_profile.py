@@ -172,7 +172,12 @@ class VolumeProfileFetcher(GeckoTerminalCollector):
                 result = dict(asdict(vp), status="available", timeframe=timeframe,
                               source_url=url, currency="usd", token="base",
                               oldest_timestamp=min(r[0] for r in rows),
-                              newest_timestamp=max(r[0] for r in rows), attempts=attempts)
+                              newest_timestamp=max(r[0] for r in rows), attempts=attempts,
+                              ohlcv_rows=rows, fetched_at=datetime.now(timezone.utc).isoformat(),
+                              request_params={"aggregate": aggregate, "limit": 100,
+                                              "currency": "usd", "token": "base",
+                                              "include_empty_intervals": "false"},
+                              evaluation_at=at.isoformat())
                 break
             except (CollectorError, ValueError, KeyError, TypeError) as exc:
                 result = dict(status="unavailable", reason=str(exc), timeframe=timeframe,

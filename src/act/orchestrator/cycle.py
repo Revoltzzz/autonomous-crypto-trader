@@ -1,6 +1,7 @@
 """Research cycles with evidence-gated paper execution only."""
 import asyncio
 import json
+from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -9,6 +10,7 @@ from act.collectors.geckoterminal import GeckoTerminalCollector as GeckoTerminal
 from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
 from act.discovery import discover, rejection_breakdown
+from act.intelligence import attach_intelligence
 from act.logging_setup import get_logger, setup_logging
 from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
@@ -117,6 +119,10 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["decisions"], prices = run_strategy(
                     pools, assessments, ledger, settings, report["cycle_id"],
                     position_prices=management["prices"], at=profile_at, volume_profiles=profiles)
+                intelligence_started = perf_counter()
+                attach_intelligence(report, pools, profiles, at=profile_at)
+                report["intelligence_stats"]["elapsed_ms"] = round((perf_counter() - intelligence_started) * 1000, 3)
+                log.info("INTELLIGENCE_STATS %s", json.dumps(report["intelligence_stats"], allow_nan=False))
                 provenance = {p.mint_address: p for p in pools}
                 for decision in report["decisions"]:
                     p = provenance[decision["mint_address"]]
