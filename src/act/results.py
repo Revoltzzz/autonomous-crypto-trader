@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 from html import escape
 
+from act.learning import learning_panel
 from act.risk.limits import RiskLimits
 from act.security import ConcentrationSettings
 from act.strategy import StrategySettings
@@ -165,7 +166,7 @@ def results_panels(latest, reports, error=None):
     warning = '<p role="alert">Results history unavailable: ' + text(error) + '</p>' if error else ''
     return ('<nav><a href="#equity">Equity</a> · <a href="#positions">Positions</a> · '
             '<a href="#trades">Trades</a> · <a href="#decision-log">Decisions</a> · '
-            '<a href="#risk">Risk</a> · <a href="#cycle-trends">Trends</a></nav>' + warning
+            '<a href="#risk">Risk</a> · <a href="#cycle-trends">Trends</a> · <a href="#learning">Learning</a></nav>' + warning
             + '<section id="equity"><h2>Paper equity curve</h2>' + equity_chart(reports)
             + '<details><summary>Exact persisted equity / cash snapshots</summary>'
             + table([r["equity_snapshot"] for r in reversed(reports) if r.get("equity_snapshot")],
@@ -179,4 +180,4 @@ def results_panels(latest, reports, error=None):
             + '</p><p>429/retry counts: unavailable unless explicitly present in persisted source stats; '
             'errors below are not retry counters.</p><details><summary>Source health / errors / recorded RPC stats</summary>'
             + raw(latest.get("collectors")) + raw(stats) + raw(latest.get("discovery_stats"))
-            + '</details></section>' + decision_panel(reports) + trend_panel(reports))
+            + '</details></section>' + decision_panel(reports) + trend_panel(reports) + learning_panel(latest, reports))

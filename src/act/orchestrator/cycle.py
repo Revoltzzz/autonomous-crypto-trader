@@ -11,6 +11,7 @@ from act.collectors.rugcheck import RugCheckCollector
 from act.config.settings import Settings
 from act.discovery import discover, rejection_breakdown
 from act.intelligence import attach_intelligence
+from act.learning import track
 from act.logging_setup import get_logger, setup_logging
 from act.paper.positions import manage_positions, position_views
 from act.persistence import get_persistence, ledger_snapshot, restore_ledger
@@ -159,6 +160,15 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["status"] = "failed"
                 report["strategy_error"] = str(exc)
                 log.exception("Paper strategy failed; no silent substitute state")
+        if store is not None:
+            try:
+                step("learning: post-decision bounded follow-ups; no strategy inputs changed")
+                await track(report, store, client=client)
+            except Exception as exc:
+                failure = failure or exc
+                report["status"] = "failed"
+                report["learning_error"] = str(exc)
+                log.exception("LEARNING_FAILED; no substitute checkpoint or observations")
         report["finished_at"] = now()
         capture_results(report)
         report["persistence"] = {"backend": type(store).__name__, "status": "pending"}

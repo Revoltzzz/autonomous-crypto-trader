@@ -37,6 +37,8 @@ def test_cycle_refreshes_remote_history_and_persists_decisions(tmp_path, monkeyp
     loads = []
 
     class Store:
+        directory = tmp_path / "reports"
+
         def load_history(self):
             loads.append(1)
             return remote.history
