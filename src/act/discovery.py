@@ -41,6 +41,7 @@ class Candidate(TokenDiscovery):
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     pair_symbols: list[str] = Field(default_factory=list)
     alternate_pool_addresses: list[str] = Field(default_factory=list)
+    intelligence_metadata: dict = Field(default_factory=dict)
 
 
 def normalize_pair(row, source):
@@ -59,10 +60,16 @@ def normalize_pair(row, source):
                   price_usd=row.get("priceUsd"), liquidity_usd=(row.get("liquidity") or {}).get("usd"),
                   volume_24h_usd=(row.get("volume") or {}).get("h24"),
                   buys_24h=tx.get("buys"), sells_24h=tx.get("sells"))
+    info = row.get("info") or {}
+    pair_evidence = dict(source_url=f"{DEX}/token-pairs/v1/solana/{mint}",
+                         observed_at=datetime.now(timezone.utc).isoformat(), pool_address=pool,
+                         socials=info.get("socials"), socials_present=bool(info["socials"]) if "socials" in info else None,
+                         boosts=row.get("boosts"), note="Links/paid promotion metadata, not sentiment; omitted is unknown.")
     return Candidate(**fields, mint_address=mint, pool_address=pool,
                      first_seen_at=datetime.fromtimestamp(created / 1000, timezone.utc),
                      source_url=f"https://dexscreener.com/solana/{pool}", sources=[source],
                      pair_symbols=[x for x in (base.get("symbol"), quote.get("symbol")) if x],
+                     intelligence_metadata={f"pair:{pool}": pair_evidence},
                      unverified_fields=[k for k, v in fields.items() if v is None])
 
 
@@ -101,16 +108,26 @@ class DexAdapter(BaseCollector):
 
     async def fetch(self):
         feed = "token-profiles" if self.source == SOURCES[2] else "token-boosts"
-        rows = await self.get_json(f"{DEX}/{feed}/latest/v1")
+        feed_url = f"{DEX}/{feed}/latest/v1"
+        rows = await self.get_json(feed_url)
         if not isinstance(rows, list):
             raise CollectorError("DexScreener feed expected array")
-        mints = []
+        mints, metadata = [], {}
+        observed = datetime.now(timezone.utc).isoformat()
         for row in rows:
             if not isinstance(row, dict):
                 raise CollectorError("DexScreener feed expected objects")
             mint = row.get("tokenAddress")
             if row.get("chainId") == "solana" and isinstance(mint, str) and mint and mint not in mints:
                 mints.append(mint)
+                links = row.get("links")
+                metadata[mint] = dict(source_url=feed_url, observed_at=observed,
+                                      description=row.get("description"), links=links,
+                                      socials_present=any(x.get("type") in ("twitter", "telegram", "discord") for x in links if isinstance(x, dict)) if isinstance(links, list) else None,
+                                      boost_feed_present=self.source == SOURCES[3],
+                                      amount=row.get("amount"), total_amount=row.get("totalAmount"),
+                                      updated_at=row.get("updatedAt"), profile_age_seconds=None,
+                                      profile_age_reason="No verified profile creation timestamp; pool/update age is not profile age.")
         result = []
         for mint in mints[:self.lookup_limit]:
             try:
@@ -122,6 +139,7 @@ class DexAdapter(BaseCollector):
                         p = normalize_pair(row, self.source)
                         # Quote-side tokens must not be relabeled as base tokens.
                         if p is not None and p.mint_address == mint:
+                            p.intelligence_metadata[self.source] = metadata[mint]
                             result.append(p)
                     except (ValueError, TypeError, OverflowError) as exc:
                         self.issues.append(str(exc))
@@ -152,6 +170,8 @@ def merge_candidates(rows, priority, cap):
             groups.append(existing)
         else:
             duplicates.update(p.sources)
+            for key, evidence in p.intelligence_metadata.items():
+                existing.intelligence_metadata.setdefault(key, evidence)
             for s in p.sources:
                 if s not in existing.sources:
                     existing.sources.append(s)
