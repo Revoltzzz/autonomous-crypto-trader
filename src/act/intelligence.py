@@ -2,8 +2,8 @@
 from collections import Counter
 from datetime import datetime, timezone
 from math import isfinite
-from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from act.volume_profile import validate_rows
@@ -19,7 +19,14 @@ class IntelligenceSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="INTELLIGENCE_", extra="ignore", frozen=True)
     ta_enabled: bool = True
     # No threshold policy exists yet. Enabling gates requires a reviewed future change.
-    gates_enabled: Literal[False] = False
+    gates_enabled: bool = False
+
+    @field_validator("gates_enabled")
+    @classmethod
+    def gates_stay_off(cls, value):
+        if value:
+            raise ValueError("Intelligence gates have no reviewed threshold policy; keep OFF")
+        return value
 
 
 def evidence(value=None, reason=None, **metadata):
