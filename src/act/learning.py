@@ -58,12 +58,16 @@ def config():
 def load_checkpoint(store):
     if hasattr(store, "_request"):
         rows = store._request("GET", "cycles", params={"select": "report->learning",
-                             "order": "completed_at.desc", "limit": "1"}).json()
+                             "order": "completed_at.desc", "limit": "1", "report->learning": "not.is.null"}).json()
         if not isinstance(rows, list):
             raise ValueError("Invalid learning checkpoint response")
         return rows[0].get("learning") if rows else None
     paths = sorted(store.directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return json.loads(paths[0].read_text()).get("learning") if paths else None
+    for path in paths:
+        learning = json.loads(path.read_text()).get("learning")
+        if learning is not None:
+            return learning
+    return None
 
 
 def initial(at):
@@ -183,24 +187,38 @@ def summary(values, total=None):
 
 def distributions(report, events):
     decisions = report.get("decisions", [])
-    ta, security, missing, reasons = defaultdict(list), defaultdict(Counter), Counter(), Counter()
+    from act.intelligence import WINDOWS
+
+    ta = {key: [] for key in WINDOWS}
+    security, missing, reasons = defaultdict(Counter), Counter(), Counter()
+    market = {key: [] for key in ("price_usd", "liquidity_usd", "volume_24h_usd", "buys_24h", "sells_24h")}
+    pools = {p["mint_address"]: p for p in report.get("discoveries", [])}
+    lp = []
     for d in decisions:
         proposal = d.get("proposal") or {}
         indicators = ((proposal.get("intelligence") or {}).get("ta") or {}).get("indicators") or {}
-        for key, value in indicators.items():
+        for key in ta:
+            value = indicators.get(key) or {}
             ta[key].append(value.get("value") if value.get("available") else None)
+        for key in market:
+            market[key].append(pools.get(d["mint_address"], {}).get(key))
+        assessment = report.get("assessments", {}).get(d["mint_address"], {})
+        lp.append(assessment.get("lp_locked_pct"))
+        security["lp_locked_pct:" + str(assessment.get("source", "missing"))][json.dumps(assessment.get("lp_locked_pct"))] += 1
         fields = (proposal.get("security_evidence") or {}).get("fields") or {}
         for key in ("mint_authority_revoked", "freeze_authority_revoked", "top_holder_concentration_pct"):
             field = fields.get(key) or {}
             value = field.get("effective_value")
             source = field.get("source", "missing")
             security[key + ":" + source][json.dumps(value, sort_keys=True)] += 1
-            if value is None:
-                missing["security." + key] += 1
+            missing["security." + key] += int(value is None)
         reasons.update(d.get("failure_reasons", []))
         for key in d.get("missing_fields", []):
             missing["decision." + key] += 1
-    return {"candidate_n": len(decisions), "ta": {k: summary(v, len(decisions)) for k, v in ta.items()},
+    missing["security.lp_locked_pct"] = sum(v is None for v in lp)
+    return {"candidate_n": len(decisions),
+            "market": {k: summary(v) for k, v in market.items()},
+            "lp_locked_pct": summary(lp), "ta": {k: summary(v, len(decisions)) for k, v in ta.items()},
             "security_values_by_source": {k: {"n": sum(v.values()), "values": dict(v)} for k, v in security.items()},
             "missing_fields": {k: {"n_missing": v, "n": len(decisions)} for k, v in missing.items()},
             "rejection_reasons": {k: {"n": v, "candidate_n": len(decisions)} for k, v in reasons.items()},
@@ -289,7 +307,7 @@ def learning_panel(latest, reports):
     learning = latest.get("learning")
     out = '<section id="learning"><h2>Learning / calibration (evidence only)</h2>'
     if not learning:
-        return out + '<p>Outcome tracking not recorded for this cycle.</p></section>'
+        return out + '<p>Outcome tracking not recorded for this cycle.</p>' + raw(latest.get("learning_error")) + '</section>'
     state = learning["state"]
     out += ('<p>Outcome tracking started ' + text(state["started_at"]) + '. No backfill.</p>'
             '<p>SMALL-N WARNING: every aggregate shows n. Descriptive only; no threshold recommendation. '
@@ -301,7 +319,7 @@ def learning_panel(latest, reports):
     if not any(s["observations"] for s in state["active"] + state["recent"]):
         out += '<p>First horizons pending; no completed follow-up observations yet.</p>'
     rows = []
-    for s in reversed(state["active"] + state["recent"]):
+    for s in sorted(state["active"] + state["recent"], key=lambda s: s["at"], reverse=True):
         row = {"token": s["symbol"] or s["mint_address"], "verdict": s["verdict"],
                "reasons": s["reasons"], "decision_id": s["decision_id"], "at": s["at"]}
         for h in HORIZONS:
