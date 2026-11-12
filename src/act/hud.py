@@ -242,3 +242,7 @@ def restyle(page, report, reports, error=None):
     page = page.replace('<main>', '<main>' + hero(report, reports, error)
                         + '<h2>// ALL RESEARCH VIEWS · EXPAND / COLLAPSE</h2>', 1)
     return page
+
+
+# Inherited wrapping preserves complete recorded errors, URLs and token identifiers.
+CSS += '\nmain{overflow-wrap:anywhere}\n'
