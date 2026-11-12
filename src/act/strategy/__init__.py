@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from act.domain.models import Record, SecurityAssessment, TokenDiscovery, TradeProposal
 from act.collectors.solana_rpc import SecuritySettings
 from act.paper.executor import PaperExecutor
-from act.risk.limits import check_trade
+from act.risk.limits import RiskSettings, check_trade
 from act.volume_profile import price_position, profile_stop, VolumeProfileFetcher
 
 
@@ -45,6 +45,7 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
              cycle_id: str, account, fee: float = 0.0025, slippage: float = 0.005,
              config: StrategySettings | None = None, at=None, volume_profile=None, screening_only=False) -> DecisionRecord:
     cfg = config or StrategySettings()
+    risk_cfg = RiskSettings()
     at = at or datetime.now(timezone.utc)
     missing = []
     failures = []
@@ -123,14 +124,19 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
         evidence.append("volume_profile: not_attempted (hard filters/equity failed)")
     if not failures:
         entry = pool.price_usd
-        stop, stop_basis = profile_stop(entry, vp["val"], cfg.stop_fraction)
+        slipped_entry = entry * (1 + slippage)
+        # Preserve tighter VAL stops; anchor the fraction floor to actual paper entry.
+        stop, stop_basis = profile_stop(slipped_entry, vp["val"], cfg.stop_fraction)
         evidence.append(stop_basis)
         target = entry * (1 + cfg.target_fraction)
         risk_budget = account.equity * 0.01
         nominal_notional = risk_budget / ((entry - stop) / entry)
         entry_cost = entry * (1 + slippage) * (1 + fee)
         stop_proceeds = stop * (1 - slippage) * (1 - fee)
-        size = min(nominal_notional / entry, risk_budget / (entry_cost - stop_proceeds)) * (1 - 1e-10)
+        notional_cap = account.equity * risk_cfg.max_position_notional_fraction
+        # Cap executed (slipped-entry) notional before proposal, gate and ledger.
+        size = min(nominal_notional / entry, risk_budget / (entry_cost - stop_proceeds),
+                   notional_cap / slipped_entry) * (1 - 1e-10)
         trade = TradeProposal(token=pool.mint_address, pool_address=pool.pool_address,
                               entry_price=entry, size=size,
                               stop_loss=stop, take_profit=target, strategy="screened-paper-v1",
@@ -145,6 +151,10 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
             proposal = dict(trade.model_dump(mode="json"), volume_profile=vp, stop_basis=stop_basis,
                             entry_price_basis="GeckoTerminal base_token_price_usd (USD quote)",
                             nominal_position_notional_usd=nominal_notional,
+                            max_position_notional_fraction=risk_cfg.max_position_notional_fraction,
+                            position_notional_cap_usd=notional_cap,
+                            slipped_entry_notional_usd=size * slipped_entry,
+                            worst_case_loss_bound_usd=size * slipped_entry * (1 + fee),
                             position_notional_usd=size * entry, risk_budget_usd=risk_budget,
                             max_estimated_loss=gate.risk_usd, estimated_fees=fees,
                             estimated_slippage=slip, risk_reward_ratio=reward / gate.risk_usd,
