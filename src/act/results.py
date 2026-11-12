@@ -5,7 +5,7 @@ from datetime import datetime
 from html import escape
 
 from act.learning import learning_panel
-from act.risk.limits import RiskLimits
+from act.risk.limits import RiskLimits, RiskSettings
 from act.security import ConcentrationSettings
 from act.strategy import StrategySettings
 
@@ -27,6 +27,7 @@ def capture_results(report):
         **{k.upper(): v for k, v in ConcentrationSettings().model_dump().items()
            if k.startswith("security_") or k in ("solana_rpc_cycle_budget", "solana_rpc_retries")},
         **{k.upper(): v for k, v in vars(RiskLimits()).items()},
+        **{"RISK_" + k.upper(): v for k, v in RiskSettings().model_dump().items()},
     }
 
 
@@ -156,7 +157,18 @@ def results_panels(latest, reports, error=None):
     cfg = latest.get("results_config") or {}
     positions = latest.get("paper_positions")
     stats = latest.get("security_source_stats") or {}
-    risk = {"open_positions": len(positions) if positions is not None else None,
+    fraction = cfg.get("RISK_MAX_POSITION_NOTIONAL_FRACTION")
+    equity = account.get("equity")
+    cap = (equity * fraction if type(equity) in (int, float)
+           and math.isfinite(equity) and equity > 0 and type(fraction) in (int, float)
+           and math.isfinite(fraction) and 0 < fraction <= 1 else None)
+    risk = {"max_position_notional_fraction": fraction,
+            "new_position_notional_cap_usd": cap,
+            "per_position_worst_case_bound": (f"USD {cap:.6f} + modeled entry fee"
+                                               if cap is not None else "n/a (not recorded)"),
+            "bound_basis": "New positions only; as-of cycle equity. Not a guaranteed stop fill. "
+                           "Historical position bounds are n/a unless recorded in their proposal.",
+            "open_positions": len(positions) if positions is not None else None,
             "position_cap": cfg.get("STRATEGY_MAX_OPEN_POSITIONS"),
             "open_risk_usd": account.get("open_risk_usd"), "equity": account.get("equity"),
             "cash": account.get("cash"), "risk_per_trade_pct": cfg.get("MAX_RISK_PER_TRADE_PCT"),
