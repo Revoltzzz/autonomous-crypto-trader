@@ -374,3 +374,127 @@ Six panels:
 After each cycle the service makes one bounded read of `cycles.report` ordered by completed_at descending (limit 30), then serves the in-memory view without per-request provider/database calls. Durable reports retain snapshots beyond the display window. Decision HTML is capped at 200 candidates; details collapse raw evidence for mobile reading. All closed ledger trades remain visible. Local mode only keeps the recent cache for the process lifetime; Render sleeps/redeploys lose local files but configured Supabase reports survive. Until the first cycle completes, data is unavailable. A failed history read clears the history view, logs RESULTS_HISTORY_FAILED and shows a loud banner / health field; no synthetic fallback. Current account marks are as of the displayed cycle, not live market valuations.
 
 No new environment variables, API keys, external services, paid resources or Supabase schema changes are required. Existing Render auto-deploy applies after merge. Offline results tests cover snapshot copying/null valuations, no backfill, flat and gap charts, bounded reads, all six sections, read-only routes, escaping/capping, stored rejection labels, duration and preservation of losses/fees; no network or lifespan is started by those tests.
+
+
+## Strategy validation and readiness — evidence only
+
+PAPER ONLY. The ninth dashboard panel computes and displays evidence; it does not
+permit trading, change strategy semantics, or enforce any Phase 2 threshold.
+The strategy does not read readiness values. No exchange APIs, keys, paid services,
+optimization machinery, or backfilled observations are introduced.
+
+### Reference gates and metric definitions
+
+Named display-only constants in src/act/readiness.py are DISPLAY_MIN_TRADES=100,
+DISPLAY_MIN_WEEKS=8, DISPLAY_MIN_EXPECTANCY=0, DISPLAY_MIN_PF=1.3 and
+DISPLAY_MAX_DD_PCT=10; DISPLAY_REFERENCES contains the labels. The seven gates are:
+
+1. Completed ledger trades >=100. A known count below 100 is a measured fail;
+   an unavailable ledger is insufficient data, not zero.
+2. Elapsed calendar weeks >=8 from BOTH the first retained persisted cycle and
+   first recorded trade (open or closed). Both baselines are shown separately.
+   This is calendar age, not eight weeks of continuous uptime.
+3. Mean closed-trade realized_pnl >0 USD after the ledger's modeled fees and
+   slipped execution prices. Use recorded net P&L directly: never subtract costs
+   twice or reconstruct quotes. Missing recorded fees/prices/P&L is insufficient.
+   Separate historical slippage-dollar attribution is not recorded.
+4. Profit factor >1.3: sum of positive recorded net P&L divided by the absolute
+   sum of negative recorded net P&L. Zero gross losses is undefined/insufficient,
+   never infinity. Zero-P&L trades are neither wins nor losses. This cost-inclusive
+   definition uses the closed ledger, not unrealized gains.
+5. Maximum drawdown <10%: peak-to-trough decline on valid positive equity snapshots.
+   At least two snapshots are needed. Coverage start/end/count are explicit;
+   this is capture-window DD, not intracycle or pre-capture lifetime DD. Missing
+   valuations and Render sleep gaps cannot be interpolated.
+6. Out of sample: plan documented, awaiting data; always insufficient until an
+   actual reserved-period validation study is completed and independently reviewed.
+   This build does not turn the documented plan into a passing validation result.
+7. Critical issues: zero recorded health flags in the retained cycle window.
+   Exact proxy fields are status (non-success), error, strategy_error,
+   learning_error, persistence.status=failed or persistence.error,
+   collectors.*.status in failed/degraded or collectors.*.error, and nonempty
+   position_management.stale_tokens. Missing cycle status prevents certification.
+   This cumulative historical proxy has no issue-resolution registry; it neither
+   establishes that old flags remain unresolved nor certifies absence of security,
+   manual-review, missing-cycle or unrecorded issues. The current atomic write
+   cannot certify its own successful persistence.
+
+Every metric carries n, data start and coverage caveats. Expectancy/PF gate
+comparisons require at least two observations; this minimal descriptive floor
+is NOT statistical readiness, and does not replace the separate 100-trade gate.
+Win rate, duration min/mean/median/max (closed minus opened hours), exact exit
+reason counts, and open positions/unrealized P&L are context, not extra gates.
+Open-position P&L is never included in closed expectancy or PF. SMALL-N warnings
+apply to every aggregate; no annualization or extrapolation is performed.
+
+### Forward-only persistence and replay
+
+After results capture, capture_readiness reads existing persisted cycle projections
+and the current complete ledger. It saves the new readiness object inside the
+same existing atomic persist_paper_cycle JSON RPC; no migration is required.
+There is no historical readiness backfill or strategy dependency. The panel shows
+at most 30 recent readiness summaries; underlying retained cycle records remain.
+Remote history is paged in batches of 100 with a 10,000-cycle safety cap: reaching
+that cap fails loudly instead of silently computing a truncated lifetime metric.
+Local mode uses retained sibling report files and is ephemeral on Render.
+
+Each snapshot records its version, compute time, record IDs, projected field list,
+exclusive history cutoff, coverage window and SHA256 canonical JSON hashes for
+cycles, trades and positions. To replay, retain the raw current report and listed
+historical projections, then call compute(current_report, projected_cycles,
+computed_at) using the recorded version. The current persistence field is normalized
+to pending_atomic_commit before hashing so a later successful write does not alter
+its input identity. Historical projections and full immutable ledger values must
+match the hashes; dashboard summaries alone are not sufficient replay inputs.
+READINESS_STATS logs computation time and gate states; READINESS_FAILED and
+readiness_error expose collection/computation failure without substituting data,
+changing strategy decisions, or introducing a trading gate. Tests are synthetic,
+offline and separate from production records.
+
+### Prospective walk-forward / out-of-sample study plan
+
+This is a plan, not validation and not an optimizer. In this build NOTHING is
+re-fit. Before any future study, pre-register the split dates, endpoints, sample
+requirements and analysis code/config hashes without viewing reserved outcomes.
+First accumulate at least the reference 100 completed paper trades and eight
+calendar weeks; those counts alone do not guarantee enough independent samples
+for the following longer study. Use rolling eight-week training windows followed
+by two-week reserved OOS windows, with at least three nonoverlapping OOS folds
+and an additional untouched final two-week holdout. Extend collection if per-fold
+sample counts or label completeness are inadequate; never manufacture coverage.
+
+Use immutable learning-session decision times for assignment. Train only on
+sessions whose longest seven-day outcome has matured before the training cutoff;
+apply a seven-day purge/embargo at boundaries and exclude token/pool identities
+shared across train and reserved cohorts from training to limit leakage. Report
+both the excluded population and all missing/late labels. Reserved sessions may
+be scored only by the pre-registered frozen version; they cannot be used to pick
+parameters, retry a favorable split, or choose an exit after observing outcomes.
+
+A separately reviewed future proposal could fit descriptive calibration or
+candidate-scoring parameters ONLY on training sessions. No such model or retraining
+is implemented here. Freeze strategy rules, thresholds, security/preflight filters,
+risk/sizing, fee/slippage assumptions, data sources and code version for each OOS
+period and the final holdout. Any change starts a new prospective study/version.
+A study manifest must retain split/session/trade IDs, hashes, exclusions, model
+artifacts if ever introduced, missingness, code/config versions, and exact net
+paper-trade outcomes. Hypothetical learning returns for rejected candidates are
+not executable fills and must not be pooled into realized paper expectancy.
+Report each fold and the final holdout separately, net costs, DD capture windows,
+small-n uncertainty and selection bias; independent review, not this panel,
+determines whether evidence satisfies the owner's real-money prerequisites.
+
+Retained-data audit: per-cycle full decision/session/outcome events, decision and
+cycle IDs, verdict/reasons, discovery/TA evidence where captured, baseline and
+observation timestamps, horizons/due times/lateness, prices/liquidity/volume and
+paper ledger/equity records support a future reproducible descriptive study.
+Use durable cycle events, not only the bounded active/recent learning checkpoint.
+They do NOT yet prove adequate sample size or complete coverage. Provider quote
+timestamps can be absent; preflight selection limits captured TA cohorts; sleeping
+free-tier cycles, follow-up budget/backlog caps and unavailable quotes create
+nonrandom missing outcomes. There is no tick/order-book reconstruction, historical
+slippage-dollar attribution, live fill/market-impact evidence or completed OOS
+validation. Report these gaps rather than backfill or claim an unbiased study.
+
+The immutable provenance pattern continues the prior read-only HFTENGINE review;
+no HFTENGINE code was copied and that repository is not modified.
