@@ -13,6 +13,11 @@ from statistics import mean, median
 from time import perf_counter
 
 VERSION = "readiness-v1"
+DISPLAY_MIN_TRADES = 100
+DISPLAY_MIN_WEEKS = 8
+DISPLAY_MIN_EXPECTANCY = 0
+DISPLAY_MIN_PF = 1.3
+DISPLAY_MAX_DD_PCT = 10
 DISPLAY_REFERENCES = {
     "trades_completed": ">= 100", "weeks_elapsed": ">= 8 (both baselines)",
     "net_expectancy_after_fees": "> 0 USD / closed trade",
@@ -113,7 +118,10 @@ def compute(report, cycles, computed_at):
     cycles = sorted({r["cycle_id"]: project(r) for r in cycles
                      if r.get("cycle_id") != report.get("cycle_id")}.values(),
                     key=lambda r: (r.get("finished_at") or "", r["cycle_id"]))
-    inputs = cycles + [project(report)]
+    current = project(report)
+    # A replay sees the post-write persistence field; normalize pending atomic input.
+    current["persistence"] = {"status": "pending_atomic_commit"}
+    inputs = cycles + [current]
     trades_known = "paper_trades" in report and "paper_account" in report and not report.get("strategy_error")
     trades = report.get("paper_trades") or []
     positions = report.get("paper_positions") or []
@@ -189,13 +197,13 @@ def compute(report, cycles, computed_at):
             item = metric({"persisted_cycle": a["value"], "first_trade": b["value"]},
                           b["n"], {"persisted_cycle": first_cycle, "first_trade": first_trade},
                           "Both baselines must reach 8 weeks. Wall clock is not uptime.", known)
-            passed = known and min(a["value"], b["value"]) >= 8
+            passed = known and min(a["value"], b["value"]) >= DISPLAY_MIN_WEEKS
         else:
             item = dict(metrics[key])
             v = item["value"]
-            passed = v is not None and {"trades_completed": lambda: v >= 100,
-                "net_expectancy_after_fees": lambda: v > 0, "profit_factor": lambda: v > 1.3,
-                "max_drawdown_pct": lambda: v < 10, "critical_issues": lambda: v == 0}[key]()
+            passed = v is not None and {"trades_completed": lambda: v >= DISPLAY_MIN_TRADES,
+                "net_expectancy_after_fees": lambda: v > DISPLAY_MIN_EXPECTANCY, "profit_factor": lambda: v > DISPLAY_MIN_PF,
+                "max_drawdown_pct": lambda: v < DISPLAY_MAX_DD_PCT, "critical_issues": lambda: v == 0}[key]()
             # A single closed trade cannot establish distributional aggregates.
             if key in ("net_expectancy_after_fees", "profit_factor") and n < 2:
                 item["status"] = "insufficient_data"
