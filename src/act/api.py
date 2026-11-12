@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
+from act.hud import restyle
 from act.config.settings import Settings
 from act.intelligence import intelligence_panel
 from act.logging_setup import setup_logging
@@ -156,7 +157,7 @@ def dashboard():
         ("realized_pnl", "Net realized P&L USD"), ("fees_paid", "Total fees USD"),
         ("opened_at", "Opened UTC"), ("closed_at", "Closed UTC"),
         ("holding_duration", "Holding duration")], "No closed paper trades; no live exit demonstrated.")
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
+    page = f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autonomous Crypto Trader | Results</title><style>
 body{{margin:0;background:#0b1220;color:#e2e8f0;font:16px system-ui;line-height:1.6}}
@@ -181,3 +182,4 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <section id="audit"><h2>Latest cycle audit</h2><details><summary>Position management / ordered steps</summary><pre>{safe(json.dumps(result.get("position_management", {}), indent=2))}</pre><pre>{safe(json.dumps(result.get("steps", []), indent=2))}</pre></details>
 <details><summary>Markets / pools / assessments / volume profiles / source outcomes</summary><pre>{safe(json.dumps({k: result.get(k) for k in ("markets", "discoveries", "assessments", "volume_profile_counts", "collectors", "discovery_stats", "security_source_stats")}, indent=2))}</pre></details></section>
 <p>Cycles run about every 20 minutes after completion while awake. Free hosting may sleep and pauses monitoring. Local-only history is ephemeral; configured Supabase storage survives redeploys. Historical results are not investment advice. <a href="/health">Health JSON</a> · <a href="/status">Full cycle JSON</a></p></main></body></html>'''
+    return restyle(page, result, RECENT, HISTORY_ERROR)
