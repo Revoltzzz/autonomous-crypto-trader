@@ -548,3 +548,18 @@ acceptance, cycle cadence, max-age, retry, executor, persistence or dashboard da
 is relaxed. No real-money capability, fabricated data, paid service or API key is added.
 HFTENGINE's previously adopted immutable input/decision/provenance snapshot pattern
 is unchanged; no code is copied from it and that repository is not modified.
+
+
+## Stored-state HUD dashboard
+
+The mobile-first paper-only HUD keeps all nine detailed views and their provenance
+expandables. Hero details show recorded open positions (or explicit zero), the last
+five closed ledger trades with true sample count, recorded risk configuration and
+last/min/max equity snapshot labels. Missing or stale valuations stay unavailable;
+sleep gaps stay gaps. Long recorded errors and identifiers wrap without truncation.
+
+At startup the read-only results cache loads the existing bounded persisted cycle
+report window once before serving, then uses the existing post-cycle refresh. Page
+requests do not fetch persistence. The last stored state has an as-of timestamp,
+not a live-quote claim; absent records or a failed history read remain unavailable.
+No strategy, executor, collection cadence or persistence writes are changed.
