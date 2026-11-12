@@ -17,6 +17,7 @@ from act.logging_setup import setup_logging
 from act.orchestrator.cycle import now, run_cycle
 from act.persistence import get_persistence
 from act.results import load_reports, results_panels
+from act.readiness import readiness_panel
 
 STARTED = time.monotonic()
 LATEST = None
@@ -138,7 +139,8 @@ def dashboard():
         ("price_vs_value_area", "Price vs VA"), ("timeframe", "Timeframe"),
         ("candle_count", "Completed candles"), ("reason", "Unavailable reason")],
         "No candidate decisions yet.")
-    panels = results_panels(result, RECENT, HISTORY_ERROR) + intelligence_panel(result)
+    panels = (results_panels(result, RECENT, HISTORY_ERROR) + intelligence_panel(result)
+              + readiness_panel(result, RECENT))
     empty_trades = ("<p>No trades yet - the strategy has not yet produced a BUY.</p>"
                     if account and not result.get("paper_trades") and not result.get("paper_positions") else "")
     positions = record_table(result.get("paper_positions", []), [
