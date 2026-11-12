@@ -154,7 +154,9 @@ def evaluate(pool: TokenDiscovery, security: SecurityAssessment | None, *,
                             max_position_notional_fraction=risk_cfg.max_position_notional_fraction,
                             position_notional_cap_usd=notional_cap,
                             slipped_entry_notional_usd=size * slipped_entry,
-                            worst_case_loss_bound_usd=size * slipped_entry * (1 + fee),
+                            # Use the ledger's principal + entry-fee arithmetic (avoid a 1-ULP understatement).
+                    worst_case_loss_bound_usd=(slipped_entry * size
+                                               + slipped_entry * size * fee),
                             position_notional_usd=size * entry, risk_budget_usd=risk_budget,
                             max_estimated_loss=gate.risk_usd, estimated_fees=fees,
                             estimated_slippage=slip, risk_reward_ratio=reward / gate.risk_usd,
