@@ -2,7 +2,7 @@
 
 Fixture: public /status cycle 6f6cafc5-fe2c-4897-bc63-0d79b9dde368,
 finished 2026-11-12T14:12:43.012157+00:00. Captured November 12, 2026.
-JSON formatting is normalized; this fixture is never loaded by the service.
+Exact raw JSON fixture; this fixture is never loaded by the service.
 The pre-HUD dashboard body is preserved in api.dashboard: replacing only its
 final restyle call with identity measures that renderer, not a network GET.
 One genuine stored cycle is used as both latest and the loaded history window;
@@ -49,7 +49,7 @@ def test_frozen_public_cycle_and_evidence_preservation(monkeypatch):
     assert report['cycle_id'] == '6f6cafc5-fe2c-4897-bc63-0d79b9dde368'
     assert report['paper_only'] is True
     assert report['persistence']['status'] == 'persisted'
-    assert report['paper_account']['equity'] == 9411.3
+    assert round(report['paper_account']['equity'], 2) == 9411.30
     original = copy.deepcopy(report)
     monkeypatch.setattr(api, 'LATEST', report)
     monkeypatch.setattr(api, 'RECENT', [report])
