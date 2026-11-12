@@ -95,10 +95,10 @@ def chart(reports, logarithmic=False, events=()):
                       f'{label} {money(value)}<title>{text(p.get("timestamp"))}</title></text>')
     last_at, last = points[-1]
     if number(last.get('equity')):
-        output.append(f'<circle class="last-value" cx="{x(last_at):.2f}" '
-                      f'cy="{y(last["equity"]):.2f}" r="6" fill="#5fffd2">'
+        output.append(f'<ellipse class="last-value" cx="{x(last_at):.2f}" '
+                      f'cy="{y(last["equity"]):.2f}" rx="6" ry="6" fill="#5fffd2">'
                       f'<title>Last recorded: {text(last.get("timestamp"))} '
-                      f'{money(last["equity"])}</title></circle>'
+                      f'{money(last["equity"])}</title></ellipse>'
                       f'<text x="745" y="35" text-anchor="end" fill="#5fffd2" '
                       f'font-size="12">LAST {money(last["equity"])}</text>')
     else:
@@ -264,6 +264,16 @@ def restyle(page, report, reports, error=None):
 CSS += '\nmain{overflow-wrap:anywhere}\n'
 
 
+def token_label(row, symbols):
+    """Prefer recorded symbols, including the ledger's recorded ASSET reason."""
+    symbol = row.get('symbol') or symbols.get(row.get('token'))
+    if not symbol:
+        match = re.match(r'^ASSET ([^ ]+) \(([^)]+)\);', str(row.get('reason') or ''))
+        if match and match.group(2) == row.get('token'):
+            symbol = match.group(1)
+    return symbol or row.get('token')
+
+
 def percent(value):
     return f'{value:+.2f}%' if number(value) else 'n/a'
 
@@ -281,7 +291,7 @@ def detail_cards(report, reports):
         basis = entry * size if number(entry) and entry > 0 and number(size) and size > 0 else None
         pnl = row.get('unrealized_pnl') if fresh else None
         pct = pnl / basis * 100 if number(pnl) and basis else None
-        out += '<div class="position"><b>' + text(row.get('token')) + '</b>'
+        out += '<div class="position"><b>' + text(token_label(row, {})) + '</b>'
         out += '<p>Entry: ' + text(entry) + ' · Current mark: ' + (text(mark) if fresh else 'unavailable / stale') + '</p>'
         tone = 'negative' if number(pnl) and pnl < 0 else 'positive' if number(pnl) and pnl > 0 else ''
         out += f'<p class="{tone}">Unrealized: {money(pnl)} · {percent(pct)} (entry notional basis)</p>'
@@ -313,7 +323,7 @@ def detail_cards(report, reports):
         opened, closed = timestamp(row.get('opened_at')), timestamp(row.get('closed_at'))
         duration = f'{(closed - opened) / 3600:.2f} hours' if opened is not None and closed is not None and closed >= opened else 'n/a'
         tone = 'negative' if number(pnl) and pnl < 0 else 'positive' if number(pnl) and pnl > 0 else ''
-        out += '<div class="trade"><b>' + text(symbols.get(row.get('token')) or row.get('token')) + '</b>'
+        out += '<div class="trade"><b>' + text(token_label(row, symbols)) + '</b>'
         out += '<p>' + text(row.get('exit_reason')) + f' · <span class="{tone}">{money(pnl)} · {percent(pct)}</span>'
         out += ' (net P&amp;L / entry notional) · Hold: ' + duration + '</p><small>Closed: ' + text(row.get('closed_at')) + '</small></div>'
     return out + '</section>'
