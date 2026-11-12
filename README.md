@@ -136,13 +136,14 @@ Pydantic `StrategySettings` reads these environment overrides (defaults):
 | STRATEGY_MIN_VOLUME_24H_USD | 25000 | at least USD |
 | STRATEGY_MIN_BUYS_SELLS_RATIO | 1.1 | at least; zero sells is undefined and rejected |
 | STRATEGY_MAX_POOL_AGE_HOURS | 72 | 0 through 72 inclusive |
-| STRATEGY_STOP_FRACTION | 0.15 | stop below quoted entry |
+| STRATEGY_STOP_FRACTION | 0.15 | fraction floor below slipped entry; tighter VAL preserved |
+| RISK_MAX_POSITION_NOTIONAL_FRACTION | 0.02 | maximum slipped-entry notional / current equity; finite (0, 1] |
 | STRATEGY_TARGET_FRACTION | 0.40 | target above quoted entry |
 | STRATEGY_MAX_OPEN_POSITIONS | 3 | cap; settings cannot exceed 3 |
 
 Missing score, LP lock, authority revocation or holder concentration data rejects, even if score is 1 and LP is 100%. Active mint/freeze authorities reject too. Missing prices, transaction counts, liquidity or volume never pass. Pool age uses GeckoTerminal pool_created_at, stored as first_seen_at. The decision data timestamp is evaluation time for this cycle, not a claim about provider freshness.
 
-Nominal notional = (current equity * 1%) / stop fraction; units = notional / quoted entry. Actual size is conservatively reduced so slipped entry + entry fee minus slipped stop proceeds after exit fee stays within the existing **1% inclusive-cost ceiling**. Both nominal and actual size are recorded. FEE_PCT=0.25 and SLIPPAGE_PCT=0.5 are per-side defaults; estimates are round-trip at stop. Max estimated loss is not a guaranteed loss ceiling on gaps. Daily loss 3%, peak drawdown 10%, available cash and aggregate open-stop exposure still gate every executor open; no override weakens them. Missing current quotes for previously opened mints blocks new opens (WATCH) and reports unavailable equity rather than inventing marks. This milestone does not add a continuous price-monitoring/automatic exit service. Existing executor close retains losing trades.
+Nominal notional = (current equity * 1%) / stop fraction; units = notional / quoted entry. Actual size is conservatively reduced so slipped entry + entry fee minus slipped stop proceeds after exit fee stays within the existing **1% inclusive-cost ceiling**, then bounded by current equity * RISK_MAX_POSITION_NOTIONAL_FRACTION / slipped entry in token units. Both nominal and actual size are recorded. FEE_PCT=0.25 and SLIPPAGE_PCT=0.5 are per-side defaults; estimates are round-trip at stop. Max estimated loss is not a guaranteed loss ceiling on gaps. Daily loss 3%, peak drawdown 10%, available cash and aggregate open-stop exposure still gate every executor open; no override weakens them. Missing current quotes for previously opened mints blocks new opens (WATCH) and reports unavailable equity rather than inventing marks. This milestone does not add a continuous price-monitoring/automatic exit service. Existing executor close retains losing trades.
 
 Apply migrations 001, 002, then `supabase/migrations/003_decisions.sql` in the Supabase SQL editor. 003 adds private RLS-enabled paper_decisions with no public policies; anon/authenticated privileges are revoked. The existing single `persist_paper_cycle` RPC atomically persists cycle, decisions and ledger. Existing ledger history must remain a prefix of each new history; paper_trades uses conflict DO NOTHING, never overwriting losses. Only backend service role may call it. Never put secrets in SQL, source or chat.
 
@@ -156,7 +157,7 @@ POC is the highest-volume bin's midpoint (ties choose the lower bin). Starting a
 
 **Entry:** all existing hard filters and risk gates remain unchanged. OHLCV is fetched only after every hard strategy filter passes and equity is available. BUY then requires current observed price **at or above VAH**, with VAL strictly below entry. Inside value area is rejected pending acceptance; below VAL is invalidation and rejected. No profile, exhausted retries, malformed/stale candles or insufficient history means REJECT, never BUY. Hard-filter rejects explicitly say profile not attempted. Profile evidence is retained in each eligible decision's existing proposal JSONB, including unavailable reasons; no new database columns/migration are required.
 
-**Stop/sizing:** stop is VAL unless farther than `STRATEGY_STOP_FRACTION` from entry, in which case the fraction cap is used and explicitly labeled (stop above VAL). Nominal sizing is 1% equity / fractional stop distance, then reduced for fees/slippage so estimated stop loss remains within the existing cost-inclusive 1% gate. Targets, concurrency, loss/drawdown gates and stale-quote protections are unchanged. Stops are not guaranteed fills: existing first-observing-cycle simulation fills still apply.
+**Stop/sizing:** stop = max(VAL, slipped entry * (1 - `STRATEGY_STOP_FRACTION`)); the tighter VAL stop is preserved. The fraction floor is anchored to the same slipped entry the paper ledger records, not the pre-entry quote. Nominal sizing is 1% equity / fractional stop distance, then reduced for fees/slippage so estimated stop loss remains within the existing cost-inclusive 1% gate, and capped at 2% equity in slipped-entry notional by default. Targets, concurrency, loss/drawdown gates and stale-quote protections are unchanged. Stops are not guaranteed fills: existing first-observing-cycle simulation fills still apply.
 
 ### OHLCV contract and rate discipline
 
@@ -498,3 +499,52 @@ validation. Report these gaps rather than backfill or claim an unbiased study.
 
 The immutable provenance pattern continues the prior read-only HFTENGINE review;
 no HFTENGINE code was copied and that repository is not modified.
+
+
+## Position-notional bound and sizing regimes
+
+**PAPER ONLY.** New proposals use the smaller of existing inclusive-cost 1%-at-stop sizing and
+`equity * RISK_MAX_POSITION_NOTIONAL_FRACTION` in executed (slipped-entry) USD notional.
+The environment variable defaults to **0.02**, using the existing prefix-based settings style;
+nonfinite values, zero, negative values and values above one fail validation loudly.
+At the owner-reported equity of $9,411.30 this is $188.226 of principal, before modeled fees.
+The cap applies before the risk gate/executor/ledger; these downstream components receive
+the bounded token size. Proposals record the fraction, cap, slipped-entry notional and
+principal-plus-entry-fee worst-case bound. For a fully funded long falling toward zero,
+loss is bounded by its purchase notional plus modeled entry fee, not by its stop price.
+The dashboard shows the recorded cycle cap and fee-qualified per-position bound; old
+cycles/positions without recorded values are n/a, never backfilled with today's settings.
+
+The stop fraction branch now uses slipped entry E: stop = E * 0.85, unless VAL is tighter.
+For quote $0.0003818 and 0.5% entry slippage, E = $0.000383709 and its fraction stop is
+$0.00032615265 (not the old quote-anchored $0.00032453). This is price-anchor consistency,
+not a promise of a fill at that price or a promise to exhaust the 1% risk budget when capped.
+Targets remain quote-anchored and unchanged.
+
+### Rationale (owner-provided completed forensic findings)
+
+The first paper trade, GTA6KODAK, closed November 12, 2026 at 13:06:46 UTC via stop_loss,
+net -$588.70 (5.89% of equity versus designed approximately 1%). It went unmonitored for
+approximately 22 hours because of Render free-tier downtime and both quote providers
+exhausting HTTP 429 retries. The first retrievable valid quote was approximately 95.7%
+below entry. The owner's forensic decomposition was approximately $94.58 entry-to-stop,
+$492.38 stop-to-first-retrievable-quote, $0.13 exit slippage and $1.60 fees. A stop is a
+trigger, not a floor; changing its threshold or cycle cadence does not bound gap loss.
+The owner delegated the sizing choice and retains approval/veto of commits, PR and merge.
+
+### Honest history
+
+- **Regime A:** from the first trade on November 11, 2026 until this change's deployment:
+  1%-risk-at-stop sizing, with no independent position-notional cap. Cash/risk gates still applied.
+- **Regime B:** from deployment of this change onward: the same risk sizing with the
+  additional default 2%-of-equity notional cap and corrected slipped-entry fraction stop.
+
+Existing trades, append-only ledger events and losses are not rewritten. Per-trade
+percentage returns remain useful across pure size changes, but dollar-based history
+mixes regimes; aggregate expectancy/profit-factor comparisons are not asserted invariant
+to differing per-trade sizes. Readiness/learning computations and thresholds are unchanged.
+No stop/target fraction (0.15/0.40), maximum positions (3), hard filter, volume-profile
+acceptance, cycle cadence, max-age, retry, executor, persistence or dashboard data rule
+is relaxed. No real-money capability, fabricated data, paid service or API key is added.
+HFTENGINE's previously adopted immutable input/decision/provenance snapshot pattern
+is unchanged; no code is copied from it and that repository is not modified.
