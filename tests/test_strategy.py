@@ -6,6 +6,8 @@ import pytest
 from act.config.settings import Settings
 from act.domain.models import AccountState, SecurityAssessment, TokenDiscovery, TradeProposal
 from act.paper.ledger import PaperLedger
+from act.risk.limits import RiskSettings
+from act.results import capture_results, results_panels
 from act.strategy import StrategySettings, evaluate, run_strategy as original_run_strategy
 
 AT = datetime.now(timezone.utc)
@@ -53,11 +55,18 @@ def test_accept_and_sizing():
     d = decision()
     assert d.decision == "BUY"
     p = d.proposal
-    assert p["nominal_position_notional_usd"] == pytest.approx(100 / 0.15)
-    assert p["stop_loss"] == pytest.approx(1.7)
+    # Deliberate new regime: fraction floor is anchored to slipped entry.
+    stop = 2 * 1.005 * 0.85
+    assert p["nominal_position_notional_usd"] == pytest.approx(100 / ((2 - stop) / 2))
+    assert p["stop_loss"] == stop
     assert p["take_profit"] == pytest.approx(2.8)
-    assert p["max_estimated_loss"] == pytest.approx(100)
-    assert p["size"] * 2 < 100 / 0.15
+    # The notional cap now binds instead of exhausting the 1%-at-stop budget.
+    size = 200 / (2 * 1.005) * (1 - 1e-10)
+    assert p["size"] == pytest.approx(size)
+    assert p["slipped_entry_notional_usd"] <= 200
+    assert p["slipped_entry_notional_usd"] == pytest.approx(200)
+    assert p["max_estimated_loss"] == pytest.approx(
+        size * (2 * 1.005 * 1.0025 - stop * 0.995 * 0.9975))
     assert p["estimated_fees"] > 0 and p["estimated_slippage"] > 0
     assert p["risk_reward_ratio"] > 2
     assert p["data_timestamp"] == AT.isoformat()
@@ -153,3 +162,93 @@ def test_env_overrides(monkeypatch):
     cfg = StrategySettings()
     assert cfg.max_rugcheck_score == 100 and cfg.stop_fraction == 0.2
     assert decision(s=security(score=100), config=cfg).decision == "REJECT"
+
+
+@pytest.mark.parametrize("equity,slippage", [(10000, 0), (9411.3, .005), (500, .02)])
+def test_notional_cap_binds_before_proposal(equity, slippage, monkeypatch):
+    monkeypatch.setenv("RISK_MAX_POSITION_NOTIONAL_FRACTION", "0.02")
+    d = decision(account=account(equity=equity, day_start_equity=equity,
+                                 peak_equity=equity), slippage=slippage)
+    assert d.decision == "BUY"
+    p = d.proposal
+    executed = p["size"] * p["entry_price"] * (1 + slippage)
+    assert executed <= equity * .02
+    assert executed == pytest.approx(equity * .02)
+    assert p["position_notional_cap_usd"] == equity * .02
+    assert p["max_estimated_loss"] < equity * .01
+    assert p["worst_case_loss_bound_usd"] == pytest.approx(executed * 1.0025)
+
+
+def test_notional_cap_does_not_bind_preserves_cost_risk(monkeypatch):
+    monkeypatch.setenv("RISK_MAX_POSITION_NOTIONAL_FRACTION", "0.5")
+    d = decision()
+    assert d.decision == "BUY"
+    p = d.proposal
+    entry_cost = 2 * 1.005 * 1.0025
+    stop_proceeds = p["stop_loss"] * .995 * .9975
+    expected = min(p["nominal_position_notional_usd"] / 2,
+                   100 / (entry_cost - stop_proceeds)) * (1 - 1e-10)
+    assert p["size"] == pytest.approx(expected)
+    assert p["max_estimated_loss"] == pytest.approx(100)
+    assert p["slipped_entry_notional_usd"] < 5000
+
+
+@pytest.mark.parametrize("val", [1.5, 1.8])
+def test_stop_anchor_survives_executor_ledger_and_replay(tmp_path, monkeypatch, val):
+    monkeypatch.setenv("RISK_MAX_POSITION_NOTIONAL_FRACTION", "0.02")
+    ledger = PaperLedger(tmp_path / "anchor.json")
+    ds, _ = run_strategy([pool()], {"mint": security()}, ledger, Settings(_env_file=None),
+                         "anchor", at=AT, volume_profiles={"pool": dict(PROFILE, val=val)})
+    assert ds[0]["decision"] == "BUY"
+    p = next(iter(ledger.positions.values()))
+    assert p.stop_loss == max(val, p.entry_price * .85)
+    assert p.stop_loss == ds[0]["proposal"]["stop_loss"]
+    assert p.entry_price * p.size <= 200
+    replayed = PaperLedger(ledger.path).positions[p.id]
+    assert replayed.stop_loss == p.stop_loss
+    prefix = ledger.history
+    bound = ds[0]["proposal"]["worst_case_loss_bound_usd"]
+    # Near-zero executable quote: a stop is not a floor; funded principal bounds loss.
+    closed = ledger.close(p.id, 1e-30, "offline gap-to-near-zero")
+    assert 0 < -closed.realized_pnl <= bound
+    assert ledger.history[:len(prefix)] == prefix
+    assert PaperLedger(ledger.path).closed_trades[0].realized_pnl == closed.realized_pnl
+
+
+def test_first_trade_quote_anchor_regression(tmp_path):
+    d = decision(p=pool(price_usd=.0003818), volume_profile=dict(
+        PROFILE, val=.0003, vah=.00035, poc=.00032))
+    assert d.decision == "BUY"
+    proposal = TradeProposal(**{k: v for k, v in d.proposal.items()
+                              if k in TradeProposal.model_fields})
+    ledger = PaperLedger(tmp_path / "first-quote.json")
+    p = ledger.open(proposal)
+    assert p.entry_price == pytest.approx(.000383709)
+    assert p.stop_loss == p.entry_price * .85
+    assert p.stop_loss == pytest.approx(.00032615265)
+
+
+@pytest.mark.parametrize("value", ["0", "-0.02", "1.01", "nan", "inf", "-inf", "bad"])
+def test_invalid_notional_fraction_fails_loudly(monkeypatch, value):
+    monkeypatch.setenv("RISK_MAX_POSITION_NOTIONAL_FRACTION", value)
+    with pytest.raises(ValueError):
+        RiskSettings()
+    with pytest.raises(ValueError):
+        decision()
+
+
+def test_notional_config_snapshot_and_historical_display(monkeypatch):
+    monkeypatch.setenv("RISK_MAX_POSITION_NOTIONAL_FRACTION", "0.03")
+    report = {"paper_account": {"equity": 10000, "cash": 10000}, "paper_positions": []}
+    capture_results(report)
+    assert report["results_config"]["RISK_MAX_POSITION_NOTIONAL_FRACTION"] == .03
+    html = results_panels(report, [])
+    assert "USD 300.000000 + modeled entry fee" in html
+    # Never backfill today's cap into an old cycle with no recorded cap.
+    old = {"paper_account": {"equity": 10000}, "results_config": {}}
+    assert "n/a (not recorded)" in results_panels(old, [])
+    assert "USD 300.000000" not in results_panels(old, [])
+    report["results_config"]["RISK_MAX_POSITION_NOTIONAL_FRACTION"] = "<script>bad()</script>"
+    html = results_panels(report, [])
+    assert "<script>bad()" not in html and "&lt;script&gt;" in html
+    assert "n/a (not recorded)" in html
