@@ -14,7 +14,7 @@ def number(value):
 
 
 def money(value):
-    return f'${value:,.2f}' if number(value) else 'Unavailable'
+    return (('-' if value < 0 else '') + f'${abs(value):,.2f}') if number(value) else 'Unavailable'
 
 
 def timestamp(value):
@@ -108,13 +108,15 @@ def chart(reports, logarithmic=False, events=()):
             'gaps may include sleep, not verified uptime.</p>')
 
 
-def recorded_events(report):
+def recorded_events(report, reports=()):
+    symbols = {d.get("mint_address"): d.get("symbol") for r in reports
+               for d in r.get("decisions", []) if d.get("symbol")}
     rows = (report.get('paper_trades') or []) + (report.get('paper_positions') or [])
     opened = [r for r in rows if timestamp(r.get('opened_at')) is not None]
     events = []
     if opened:
         first = min(opened, key=lambda r: timestamp(r['opened_at']))
-        events.append((first['opened_at'], 'First retained paper BUY · ' + str(first.get('token', 'n/a'))))
+        events.append((first['opened_at'], 'First retained paper BUY · ' + str(symbols.get(first.get('token')) or first.get('token', 'n/a'))))
     for row in report.get('paper_trades') or []:
         if row.get('exit_reason') == 'stop_loss' and timestamp(row.get('closed_at')) is not None:
             events.append((row['closed_at'], 'stop_loss · ' + money(row.get('realized_pnl'))))
@@ -157,7 +159,10 @@ def hero(report, reports, error=None):
               ('Open positions', len(report['paper_positions']) if isinstance(report.get('paper_positions'), list) else None),
               ('Learning sessions · tracked ever', stats.get('tracked_ever')),
               ('Follow-up horizons · pending', stats.get('pending')),
-              ('Follow-up horizons · terminal in view', stats.get('terminal_in_view'))]
+              ('Follow-up horizons · terminal in view', stats.get('terminal_in_view')),
+              ('Follow-up horizons · observed / partial in view',
+               sum(stats['status_counts'].get(k, 0) for k in ('observed', 'partial'))
+               if isinstance(stats.get('status_counts'), dict) else None)]
     out = ('<header class="hud-header"><h1>AUTONOMOUS CRYPTO TRADER</h1>'
            '<span class="mode">● PAPER MODE</span></header>'
            '<p>SIMULATED - PAPER TRADING ONLY · READ-ONLY RESEARCH · NO REAL-MONEY CAPABILITY</p>'
@@ -168,9 +173,9 @@ def hero(report, reports, error=None):
            '<article><h2>RUNNING COST</h2><strong>$0.00<small>/mo</small></strong>'
            '<small>free tier · configured hosting, not a billing meter</small></article></div>'
            '<section class="history"><h2>// BALANCE HISTORY (LOG)</h2>'
-           + chart(reports, True, recorded_events(report))
+           + chart(reports, True, recorded_events(report, reports))
            + '<details><summary>Linear scale / exact observations available below</summary>'
-           + chart(reports, False, recorded_events(report)) + '</details></section>'
+           + chart(reports, False, recorded_events(report, reports)) + '</details></section>'
            '<section><h2>// LEDGER + LEARNING</h2><div class="stats">')
     out += ''.join('<div><small>' + text(k) + '</small><b>' + text(v) + '</b></div>' for k, v in fields)
     out += ('</div><p class="negative">SMALL-N: win rate n=' + text(n)
@@ -181,13 +186,26 @@ def hero(report, reports, error=None):
             + raw(stats.get('status_counts')) + raw(metrics.get('win_rate_pct')) + '</details></section>')
     collectors = report.get('collectors') or {}
     security = report.get('security_source_stats') or {}
-    sources = [('01', 'GeckoTerminal', {'collector': collectors.get('geckoterminal'), 'discovery': report.get('discovery_stats'), 'OHLCV / TA': report.get('intelligence_stats'), 'volume_profile': report.get('volume_profile_counts')}),
-               ('02', 'DexScreener', {'collector': collectors.get('dexscreener'), 'discovery': report.get('discovery_stats')}),
+    sources = [('01', 'GeckoTerminal', {'collector': collectors.get('GeckoTerminal'), 'discovery': report.get('discovery_stats'), 'OHLCV / TA': report.get('intelligence_stats'), 'volume_profile': report.get('volume_profile_counts')}),
+               ('02', 'DexScreener', {'collector': collectors.get('DexScreener'), 'discovery': report.get('discovery_stats')}),
                ('03', 'Solana RPC / on-chain + RugCheck fallback', {'security_source_stats': report.get('security_source_stats'), 'stale_tokens': (report.get('position_management') or {}).get('stale_tokens')})]
     out += '<div class="sources">'
     for index, name, data in sources:
         out += '<article><small>' + index + ' // DATA SOURCE</small><h2>' + name + '</h2>'
+        discovery = report.get('discovery_stats') or {}
+        names = ('geckoterminal_new', 'geckoterminal_trending') if index == '01' else ('dexscreener_profiles', 'dexscreener_boosts')
+        if index in ('01', '02'):
+            for key in names:
+                row = discovery.get(key) or {}
+                out += '<p>' + text(key) + ': ' + text(row.get('status')) + ' · kept ' + text(row.get('kept_after_cap')) + '</p>'
+                if row.get('errors'):
+                    out += '<p class="negative">' + text('; '.join(map(str, row['errors']))) + '</p>'
+            if index == '01':
+                ta = report.get('intelligence_stats') or {}
+                out += '<p>TA computed / candidates: ' + text(ta.get('ta_computed')) + ' / ' + text(ta.get('candidates')) + '</p>'
         if index == '03':
+            out += '<p>RPC status: ' + text((collectors.get('SolanaRPC') or {}).get('status')) + '</p>'
+            out += '<p>Three-field verified / attempted: ' + text(security.get('verified_three_fields')) + ' / ' + text(security.get('attempted_candidates')) + '</p>'
             out += budget_bar(security.get('rpc_calls'), security.get('budget'))
         else:
             out += '<p>Coverage / health: recorded evidence below; no inferred availability score.</p>'
@@ -209,12 +227,18 @@ def restyle(page, report, reports, error=None):
     # These sections are generated by our renderers, never by user-supplied HTML.
     def accordion(match):
         identifier, contents = match.groups()
+        if identifier == 'equity':
+            exact = contents.find('<details>')
+            if exact >= 0:
+                contents = '<h2>Paper equity curve · linear</h2>' + chart(reports) + contents[exact:]
         heading = re.search(r'<h2>(.*?)</h2>', contents, re.S)
         label = heading.group(1) if heading else text(identifier)
-        return (f'<details class="view" id="{identifier}" open><summary>// {label}</summary>'
+        return (f'<details class="view" id="{identifier}"><summary>// {label}</summary>'
                 + '<section>' + contents + '</section></details>')
     page = re.sub(r'<section id="([a-z-]+)">(.*?)</section>', accordion, page, flags=re.S)
     page = re.sub(r'<nav>.*?</nav>', '', page, flags=re.S)
+    page = page.replace('<p class="badge">SIMULATED - PAPER TRADING ONLY</p>', '', 1)
+    page = page.replace('<h1>Autonomous Crypto Trader</h1>', '', 1)
     page = page.replace('<main>', '<main>' + hero(report, reports, error)
                         + '<h2>// ALL RESEARCH VIEWS · EXPAND / COLLAPSE</h2>', 1)
     return page
