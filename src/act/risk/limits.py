@@ -2,7 +2,17 @@
 import math
 from dataclasses import dataclass
 
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from act.domain.models import AccountState, RiskCheckResult, TradeProposal
+
+
+class RiskSettings(BaseSettings):
+    """Proposal-time notional bound; finite fraction of current equity."""
+    model_config = SettingsConfigDict(env_prefix="RISK_", extra="ignore", frozen=True,
+                                     allow_inf_nan=False)
+    max_position_notional_fraction: float = Field(default=0.02, gt=0, le=1)
 
 
 @dataclass(frozen=True)
