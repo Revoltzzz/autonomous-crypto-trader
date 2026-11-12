@@ -161,7 +161,8 @@ def test_acceptance_invalidation_and_stops(price, expected):
     assert d.decision == expected
     assert d.proposal['volume_profile']['price_vs_value_area'] == price_position(price, vp)
     if expected == 'BUY':
-        assert d.proposal['stop_loss'] == pytest.approx(1.7)
+        # Deliberate anchor change: fraction floor uses slipped entry, not quote.
+        assert d.proposal['stop_loss'] == pytest.approx(price * 1.005 * .85)
     elif price < 1.7:
         assert 'invalidation' in d.reasoning
 
@@ -172,7 +173,8 @@ def test_val_stop_cap_and_cost_risk():
     assert stop == 1.7 and 'fraction cap' in reason
     d = evaluate(pool(), security(), cycle_id='offline', account=account(), at=AT,
                  volume_profile={'status':'available','val':1.5,'vah':1.9,'poc':1.7})
-    assert d.proposal['stop_loss'] == 1.7
+    # Pure helper checks above stay unchanged; strategy now supplies slipped entry.
+    assert d.proposal['stop_loss'] == 2 * 1.005 * .85
     assert 'fraction cap' in d.proposal['stop_basis']
     assert d.proposal['max_estimated_loss'] <= 100
 
