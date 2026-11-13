@@ -88,6 +88,22 @@ def chart(reports, logarithmic=False, events=()):
         v = 10 ** v if logarithmic else v
         output.append(f'<path d="M85 {py:.2f}H745" stroke="#303638" stroke-dasharray="3 6"/>'
                       f'<text x="2" y="{py:.2f}" fill="#a7b1b1" font-size="12">${v:,.0f}</text>')
+    for label, value in [('MIN', low), ('MAX', high)]:
+        at, p = next((at, p) for at, p in points if p.get('equity') == value)
+        output.append(f'<text class="extreme" x="{x(at):.2f}" y="{y(value) - 8:.2f}" '
+                      'text-anchor="middle" fill="#a7b1b1" font-size="10">'
+                      f'{label} {money(value)}<title>{text(p.get("timestamp"))}</title></text>')
+    last_at, last = points[-1]
+    if number(last.get('equity')):
+        output.append(f'<ellipse class="last-value" cx="{x(last_at):.2f}" '
+                      f'cy="{y(last["equity"]):.2f}" rx="6" ry="6" fill="#5fffd2">'
+                      f'<title>Last recorded: {text(last.get("timestamp"))} '
+                      f'{money(last["equity"])}</title></ellipse>'
+                      f'<text x="745" y="35" text-anchor="end" fill="#5fffd2" '
+                      f'font-size="12">LAST {money(last["equity"])}</text>')
+    else:
+        output.append('<text x="745" y="35" text-anchor="end" fill="#ff667d" '
+                      'font-size="12">LAST unavailable</text>')
     for index, (at, label) in enumerate(events):
         when = timestamp(at)
         if when is None or not start <= when <= end:
@@ -135,7 +151,7 @@ def budget_bar(used, cap):
             f'<meter min="0" max="{cap}" value="{min(used, cap)}">{used} / {cap}</meter>')
 
 
-def hero(report, reports, error=None):
+def base_hero(report, reports, error=None):
     account = report.get('paper_account') or {}
     equity = account.get('equity')
     # Paper starting balance is the established ledger configuration, not a sampled metric.
@@ -246,3 +262,85 @@ def restyle(page, report, reports, error=None):
 
 # Inherited wrapping preserves complete recorded errors, URLs and token identifiers.
 CSS += '\nmain{overflow-wrap:anywhere}\n'
+
+
+def token_label(row, symbols):
+    """Prefer recorded symbols, including the ledger's recorded ASSET reason."""
+    symbol = row.get('symbol') or symbols.get(row.get('token'))
+    if not symbol:
+        match = re.match(r'^ASSET ([^ ]+) \(([^)]+)\);', str(row.get('reason') or ''))
+        if match and match.group(2) == row.get('token'):
+            symbol = match.group(1)
+    return symbol or row.get('token')
+
+
+def percent(value):
+    return f'{value:+.2f}%' if number(value) else 'n/a'
+
+
+def detail_cards(report, reports):
+    """Read-only details; never substitute settings defaults for recorded configuration."""
+    positions = report.get('paper_positions')
+    count = len(positions) if isinstance(positions, list) else None
+    out = '<div class="hero-details"><article><h2>// OPEN POSITIONS</h2>'
+    out += '<b>' + (f'{count} OPEN POSITIONS' if count is not None else 'Positions unavailable') + '</b>'
+    for row in positions or []:
+        mark = row.get('current_price')
+        fresh = number(mark) and not row.get('stale_quoted')
+        entry, size = row.get('entry_price'), row.get('size')
+        basis = entry * size if number(entry) and entry > 0 and number(size) and size > 0 else None
+        pnl = row.get('unrealized_pnl') if fresh else None
+        pct = pnl / basis * 100 if number(pnl) and basis else None
+        out += '<div class="position"><b>' + text(token_label(row, {})) + '</b>'
+        out += '<p>Entry: ' + text(entry) + ' · Current mark: ' + (text(mark) if fresh else 'unavailable / stale') + '</p>'
+        tone = 'negative' if number(pnl) and pnl < 0 else 'positive' if number(pnl) and pnl > 0 else ''
+        out += f'<p class="{tone}">Unrealized: {money(pnl)} · {percent(pct)} (entry notional basis)</p>'
+        for label, key, distance_key in [('Stop', 'stop_loss', 'stop_distance_pct'), ('Target', 'take_profit', 'target_distance_pct')]:
+            distance = row.get(distance_key) if fresh else None
+            out += '<p>' + label + ': ' + text(row.get(key)) + ' · recorded distance: ' + percent(distance) + '</p>'
+        out += '<small>Valuation provenance: ' + text((row.get('quote') or {}).get('observed_at')) + '</small></div>'
+    cfg = report.get('results_config') or {}
+    equity = (report.get('paper_account') or {}).get('equity')
+    fraction = cfg.get('RISK_MAX_POSITION_NOTIONAL_FRACTION')
+    cap = equity * fraction if number(equity) and equity > 0 and number(fraction) and 0 < fraction <= 1 else None
+    cap_text = f'USD {cap:.6f}' if number(cap) else 'n/a (not recorded)'
+    out += '</article><article><h2>// RECORDED RISK</h2><p>Active new-position notional cap: ' + cap_text + '</p>'
+    out += '<p>Per-position worst-case bound: ' + (cap_text + ' + modeled entry fee' if number(cap) else 'n/a (not recorded)') + '</p>'
+    out += '<p>Open / maximum: ' + text(count) + ' / ' + text(cfg.get('STRATEGY_MAX_OPEN_POSITIONS')) + '</p>'
+    out += '<small>New positions only; as-of cycle equity. Not a guaranteed stop fill. Historical position bounds are n/a unless recorded in their proposal.</small></article></div>'
+    trades = report.get('paper_trades')
+    out += '<section class="recent-trades"><h2>// RECENT CLOSED TRADES</h2>'
+    if not isinstance(trades, list):
+        return out + '<p>Closed trades unavailable: no stored ledger record.</p></section>'
+    out += f'<p>Showing {min(5, len(trades))} of {len(trades)} recorded closed trades. SMALL-N: n={len(trades)}; descriptive only.</p>'
+    symbols = {d.get('mint_address'): d.get('symbol') for r in reports for d in r.get('decisions', []) if d.get('symbol')}
+    ordered = sorted(trades, key=lambda r: timestamp(r.get('closed_at')) or float('-inf'), reverse=True)
+    for row in ordered[:5]:
+        pnl = row.get('realized_pnl')
+        entry, size = row.get('entry_price'), row.get('size')
+        basis = entry * size if number(entry) and entry > 0 and number(size) and size > 0 else None
+        pct = pnl / basis * 100 if number(pnl) and basis else None
+        opened, closed = timestamp(row.get('opened_at')), timestamp(row.get('closed_at'))
+        duration = f'{(closed - opened) / 3600:.2f} hours' if opened is not None and closed is not None and closed >= opened else 'n/a'
+        tone = 'negative' if number(pnl) and pnl < 0 else 'positive' if number(pnl) and pnl > 0 else ''
+        out += '<div class="trade"><b>' + text(token_label(row, symbols)) + '</b>'
+        out += '<p>' + text(row.get('exit_reason')) + f' · <span class="{tone}">{money(pnl)} · {percent(pct)}</span>'
+        out += ' (net P&amp;L / entry notional) · Hold: ' + duration + '</p><small>Closed: ' + text(row.get('closed_at')) + '</small></div>'
+    return out + '</section>'
+
+
+def hero(report, reports, error=None):
+    as_of = report.get('finished_at') or (report.get('equity_snapshot') or {}).get('timestamp')
+    marker = '<p class="as-of">LAST STORED STATE · as of ' + text(as_of) + ' · not a live quote</p>'
+    if not as_of:
+        marker = '<p class="as-of">No stored state available; no substitute values.</p>'
+    body = base_hero(report, reports, error)
+    return marker + body.replace('<section class="history">', detail_cards(report, reports) + '<section class="history">', 1)
+
+
+CSS += '''
+.hero-details{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin:14px 0}
+.position,.trade{border-top:1px dashed #303638;padding:10px 0;overflow-wrap:anywhere}
+.as-of{color:#a7b1b1}.hero-details article{overflow-wrap:anywhere}
+@media(min-width:760px){.hero-details{grid-template-columns:repeat(2,minmax(0,1fr))}}
+'''

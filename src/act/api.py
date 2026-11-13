@@ -66,9 +66,26 @@ async def research_loop():
         await asyncio.sleep(1200)
 
 
+async def warm_results_cache():
+    """Read persisted reports once before serving; requests never fetch persistence."""
+    global LATEST, RECENT, HISTORY_ERROR
+    try:
+        store = get_persistence(Settings())
+        reports = await asyncio.to_thread(load_reports, store)
+        RECENT = reports
+        LATEST = reports[0] if reports else None
+        HISTORY_ERROR = None
+    except Exception:
+        LATEST = None
+        RECENT = []
+        HISTORY_ERROR = "Persisted cycle history read failed; no substitute history. See server logs."
+        LOG.exception("RESULTS_STARTUP_HISTORY_FAILED")
+
+
 @asynccontextmanager
 async def lifespan(app):
     setup_logging()
+    await warm_results_cache()
     task = asyncio.create_task(research_loop())
     try:
         yield
