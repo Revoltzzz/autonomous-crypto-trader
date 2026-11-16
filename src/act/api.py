@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from act.hud import restyle
+from act.agents.news import news_panel, news_brief
 from act.config.settings import Settings
 from act.intelligence import intelligence_panel
 from act.logging_setup import setup_logging
@@ -109,7 +110,8 @@ def health():
 
 @app.get("/status")
 def status():
-    return LATEST or {"status": "waiting_for_first_cycle", "paper_only": True}
+    return LATEST or {"status": "waiting_for_first_cycle", "paper_only": True,
+                      "news_brief": news_brief({})}
 
 
 def safe(value):
@@ -199,4 +201,5 @@ Persistence: {safe(result.get("persistence", "Waiting"))}</p>
 <section id="audit"><h2>Latest cycle audit</h2><details><summary>Position management / ordered steps</summary><pre>{safe(json.dumps(result.get("position_management", {}), indent=2))}</pre><pre>{safe(json.dumps(result.get("steps", []), indent=2))}</pre></details>
 <details><summary>Markets / pools / assessments / volume profiles / source outcomes</summary><pre>{safe(json.dumps({k: result.get(k) for k in ("markets", "discoveries", "assessments", "volume_profile_counts", "collectors", "discovery_stats", "security_source_stats")}, indent=2))}</pre></details></section>
 <p>Cycles run about every 20 minutes after completion while awake. Free hosting may sleep and pauses monitoring. Local-only history is ephemeral; configured Supabase storage survives redeploys. Historical results are not investment advice. <a href="/health">Health JSON</a> · <a href="/status">Full cycle JSON</a></p></main></body></html>'''
-    return restyle(page, result, RECENT, HISTORY_ERROR)
+    return restyle(page.replace("</main>", news_panel(result) + "</main>"),
+                   result, RECENT, HISTORY_ERROR)
