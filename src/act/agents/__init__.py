@@ -93,13 +93,14 @@ class Context:
             response = await asyncio.wait_for(
                 self._client.get(url, timeout=min(4, self.remaining), follow_redirects=False),
                 timeout=self.remaining)
+            source['fetched_at'] = utcnow()
             source['http_status'] = response.status_code
             response.raise_for_status()
             if len(response.content) > 2_000_000:
                 raise ValueError('Feed exceeds 2MB limit')
             source['status'] = 'success'
             return response
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             source['status'] = 'failed'
             raise
 
