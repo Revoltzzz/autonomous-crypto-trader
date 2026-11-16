@@ -344,3 +344,137 @@ CSS += '''
 .as-of{color:#a7b1b1}.hero-details article{overflow-wrap:anywhere}
 @media(min-width:760px){.hero-details{grid-template-columns:repeat(2,minmax(0,1fr))}}
 '''
+
+
+# Presentation-only motion: stored observations never imply a live market feed.
+MOTION_CSS = '''
+@keyframes hud-enter{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes hud-cursor{50%{opacity:0}}
+@keyframes hud-log{from{opacity:.55}to{opacity:1}}
+@media(prefers-reduced-motion:no-preference){
+ #overview-panel>.cards, #overview-panel>.history, #overview-panel>.sources, #overview-panel>.hero-details{animation:hud-enter 240ms ease-out both}
+ #overview-panel>.history{animation-delay:40ms} #overview-panel>.hero-details{animation-delay:80ms}
+ #overview-panel>.sources{animation-delay:120ms}
+.hud-header h1::after{content:' _';animation:hud-cursor 1.2s steps(1) infinite}
+.hud-new-log{animation:hud-log 800ms ease-out}
+}
+@media(prefers-reduced-motion:reduce){
+*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+}
+'''
+
+MOTION_SCRIPT = '''<script>
+(() => {
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  if (motion.matches) return;
+  const frames = new Set();
+  const restore = [];
+  motion.addEventListener('change', () => {
+    if (!motion.matches) return;
+    frames.forEach(cancelAnimationFrame);
+    restore.forEach(fn => fn());
+  });
+  const schedule = fn => {
+    const id = requestAnimationFrame(t => { frames.delete(id); fn(t); });
+    frames.add(id);
+  };
+  try {
+    document.querySelectorAll('.cards article').forEach(card => {
+      const label = card.querySelector('h2')?.textContent;
+      if (!['EQUITY', 'CASH', 'TOTAL P&L'].includes(label)) return;
+      const node = card.querySelector('strong');
+      if (!node) return;
+      const final = node.textContent;
+      const value = Number(final.replace(/[$,]/g, ''));
+      if (!final.includes('$') || !Number.isFinite(value)) return;
+      const key = 'act-hud-motion:' + location.pathname + ':' + label;
+      const saved = sessionStorage.getItem(key);
+      sessionStorage.setItem(key, String(value));
+      const previous = saved === null ? NaN : Number(saved);
+      if (!Number.isFinite(previous) || previous === value) return;
+      // Only interpolate from a previously displayed observation, never invented zero.
+      // Keep exact recorded text accessible; the visual copy is decorative.
+      const visual = document.createElement('span');
+      visual.setAttribute('aria-hidden', 'true');
+      node.setAttribute('aria-label', final);
+      node.replaceChildren(visual);
+      const done = () => { node.textContent = final; node.removeAttribute('aria-label'); };
+      restore.push(done);
+      let start;
+      const tick = now => {
+        if (motion.matches) { done(); return; }
+        start ??= now;
+        const progress = Math.min((now - start) / 350, 1);
+        const current = previous + (value - previous) * progress;
+        visual.textContent = (current < 0 ? '-$' : '$') + Math.abs(current).toLocaleString(
+          'en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        if (progress < 1) schedule(tick); else done();
+      };
+      schedule(tick);
+    });
+    const log = document.querySelector('#decision-log');
+    const row = log?.querySelector('tbody tr');
+    if (row) {
+      const key = 'act-hud-motion:log:' + location.pathname;
+      const signature = row.textContent;
+      const previous = sessionStorage.getItem(key);
+      sessionStorage.setItem(key, signature);
+      if (previous !== null && previous !== signature) row.classList.add('hud-new-log');
+    }
+  } catch (error) {
+    restore.forEach(fn => fn());
+    console.warn('HUD motion unavailable; exact stored values retained.', error);
+  }
+})();
+</script>'''
+
+
+static_restyle = restyle
+
+
+def restyle(page, report, reports, error=None, *, animations=True):
+    """Optional motion layer; baseline renderer is available for identical-input profiling."""
+    from act.agents.news import news_panel
+
+    news = news_panel(report)
+    page = page.replace(news, '', 1)
+    page = static_restyle(page, report, reports, error)
+    tabs = ('<nav aria-label="Dashboard views"><button type="button" '
+            'id="overview-tab" aria-controls="overview-panel" aria-expanded="true">OVERVIEW</button> '
+            '<button type="button" id="news-tab" aria-controls="news-panel" '
+            'aria-expanded="false">NEWS</button></nav>')
+    page = page.replace('<main>', '<main>' + tabs + '<div id="overview-panel">', 1)
+    page = page.replace('</main>', '</div><div id="news-panel" hidden>' + news
+                        + '</div></main>', 1)
+    page = page.replace('</style>', TAB_CSS + '</style>', 1)
+    page = page.replace('</body>', TAB_SCRIPT + '</body>', 1)
+    if not animations:
+        return page
+    return page.replace('</style>', MOTION_CSS + '</style>', 1).replace(
+        '</body>', MOTION_SCRIPT + '</body>', 1)
+
+
+TAB_CSS = '''
+[hidden]{display:none!important}
+nav[aria-label="Dashboard views"]{display:flex;flex-wrap:wrap;gap:8px}
+nav button{font:inherit;background:#080b0c;color:#b6c0c0;border:1px solid #303638;padding:12px;cursor:pointer}
+nav button[aria-expanded="true"]{color:#5fffd2;border-color:#5fffd2}
+nav button:focus-visible{outline:2px solid #5fffd2;outline-offset:3px}
+#overview-panel,#news-panel{min-width:0;overflow-wrap:anywhere}
+'''
+
+TAB_SCRIPT = '''<script>
+(() => {
+  const names = ['overview', 'news'];
+  function select(name) {
+    names.forEach(id => {
+      document.getElementById(id + '-panel').hidden = id !== name;
+      document.getElementById(id + '-tab').setAttribute('aria-expanded', String(id === name));
+    });
+  }
+  names.forEach(name => {
+    document.getElementById(name + '-tab').addEventListener('click', () => select(name));
+  });
+})();
+</script><noscript><style>#news-panel[hidden]{display:block!important}</style>
+<p>JavaScript is disabled; both dashboard views are shown.</p></noscript>'''
