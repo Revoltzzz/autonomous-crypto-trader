@@ -436,24 +436,25 @@ static_restyle = restyle
 
 def restyle(page, report, reports, error=None, *, animations=True):
     """Optional motion layer; baseline renderer is available for identical-input profiling."""
-    from act.agents.news import news_panel
-
-    news = news_panel(report)
-    page = page.replace(news, '', 1)
     page = static_restyle(page, report, reports, error)
+    head, main, contents = page.partition('<main>')
+    body, closing, tail = contents.rpartition('</main>')
+    start = body.rfind('<section><h2>// NEWS (research only)</h2>')
+    if start < 0 or not main or not closing:
+        raise ValueError('HUD NEWS panel/main boundary missing')
+    end = body.index('</section>', start) + len('</section>')
+    news = body[start:end]
+    overview = body[:start] + body[end:]
     tabs = ('<nav aria-label="Dashboard views"><button type="button" '
             'id="overview-tab" aria-controls="overview-panel" aria-expanded="true">OVERVIEW</button> '
             '<button type="button" id="news-tab" aria-controls="news-panel" '
             'aria-expanded="false">NEWS</button></nav>')
-    page = page.replace('<main>', '<main>' + tabs + '<div id="overview-panel">', 1)
-    page = page.replace('</main>', '</div><div id="news-panel" hidden>' + news
-                        + '</div></main>', 1)
-    page = page.replace('</style>', TAB_CSS + '</style>', 1)
-    page = page.replace('</body>', TAB_SCRIPT + '</body>', 1)
-    if not animations:
-        return page
-    return page.replace('</style>', MOTION_CSS + '</style>', 1).replace(
-        '</body>', MOTION_SCRIPT + '</body>', 1)
+    styles = TAB_CSS + (MOTION_CSS if animations else '')
+    scripts = TAB_SCRIPT + (MOTION_SCRIPT if animations else '')
+    return (head.replace('</style>', styles + '</style>', 1) + main + tabs
+            + '<div id="overview-panel">' + overview + '</div>'
+            + '<div id="news-panel" hidden>' + news + '</div>'
+            + scripts + closing + tail)
 
 
 TAB_CSS = '''
