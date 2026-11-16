@@ -186,6 +186,8 @@ def base_hero(report, reports, error=None):
            + '</strong><small>initial: $10,000.00 · paper starting balance</small></article>'
            f'<article><h2>TOTAL P&amp;L</h2><strong class="{tone}">{money(pnl)}</strong>'
            f'<small class="{tone}">{pct} · realized + unrealized vs initial</small></article>'
+           '<article><h2>CASH</h2><strong>' + money(account.get('cash'))
+           + '</strong><small>recorded paper cash</small></article>'
            '<article><h2>RUNNING COST</h2><strong>$0.00<small>/mo</small></strong>'
            '<small>free tier · configured hosting, not a billing meter</small></article></div>'
            '<section class="history"><h2>// BALANCE HISTORY (LOG)</h2>'
