@@ -1,0 +1,33 @@
+name: Keepalive ping
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Ping public health endpoint with one cold-start retry
+        shell: bash
+        run: |
+          url="https://autonomous-crypto-trader-69se.onrender.com/health"
+          for attempt in 1 2; do
+            echo "Health request attempt $attempt"
+            if curl --fail --silent --show-error --output /dev/null \
+              --max-time 60 \
+              --write-out 'HTTP status: %{http_code}; response time: %{time_total}s\n' \
+              "$url"; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 1 ]; then
+              echo "Request failed; waiting 45 seconds before final retry."
+              sleep 45
+            fi
+          done
+          echo "ERROR: Both keepalive attempts failed." >&2
+          exit 1
