@@ -19,6 +19,9 @@ from act.strategy import collect_volume_profiles, run_strategy
 from act.security import enrich_security
 from act.results import capture_results
 from act.readiness import capture_readiness
+from act.agents import run_agents
+from act.agents.news import news_brief
+from act.agents.telegram import push_brief
 
 
 def now():
@@ -170,6 +173,19 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["status"] = "failed"
                 report["learning_error"] = str(exc)
                 log.exception("LEARNING_FAILED; no substitute checkpoint or observations")
+        # Research-only post-decision hook: never an input to strategy or execution.
+        try:
+            report["agents"] = await run_agents(report, client=client)
+        except Exception as exc:
+            log.exception("AGENT_HOOK_FAILED; trading cycle remains isolated")
+            report["agents"] = {"news": {"status": "failed", "provenance": [],
+                                          "error": {"type": type(exc).__name__}}}
+        report["news_brief"] = news_brief(report["agents"])
+        try:
+            report["telegram"] = await push_brief(report["news_brief"])
+        except Exception:
+            log.exception("TELEGRAM_HOOK_FAILED; trading cycle remains isolated")
+            report["telegram"] = {"status": "failed"}
         report["finished_at"] = now()
         capture_results(report)
         await asyncio.to_thread(capture_readiness, report, store)
