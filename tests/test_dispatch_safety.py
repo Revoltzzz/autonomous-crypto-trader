@@ -225,4 +225,28 @@ def test_solana_effective_config_roundtrip_bytes(
     restored = evaluate(pool, security, config=config, **deepcopy(args))
     assert original.decision == restored.decision == expected
     assert prove_case(name, original, restored)["bytes"] > 0
-            
+
+
+def test_lowercase_environment_provenance(observation, monkeypatch):
+    monkeypatch.setenv("strategy_min_liquidity_usd", "12345")
+    row = effective_observation(Settings(_env_file=None))["models"]["StrategySettings"]
+    assert row["values"]["min_liquidity_usd"] == 12345
+    assert row["sources"]["min_liquidity_usd"]["source"] == "environment"
+
+
+@pytest.mark.parametrize("damage", ["market", "model", "field", "nonfinite"])
+def test_malformed_observation_rejected(tmp_path, observation, damage):
+    state = legacy(tmp_path)
+    before = deepcopy(state)
+    value = deepcopy(observation)
+    if damage == "market":
+        value["markets"].pop("spot")
+    elif damage == "model":
+        value["models"].pop("StrategySettings")
+    elif damage == "field":
+        value["models"]["StrategySettings"]["sources"].pop("min_liquidity_usd")
+    else:
+        value["costs"]["solana"]["fee_pct"] = float("nan")
+    with pytest.raises(ValueError):
+        migrate_observation(state, value, at=LATER)
+    assert state == before
