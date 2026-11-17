@@ -114,7 +114,8 @@ def test_motion_budget_identical_stored_input(monkeypatch):
     monkeypatch.setattr(api, 'LATEST', report)
     monkeypatch.setattr(api, 'RECENT', [report])
     monkeypatch.setattr(api, 'HISTORY_ERROR', None)
-    renderers = {'before': static_restyle, 'after': restyle}
+    # Hold the approved tabbed layout identical; isolate animation-layer overhead.
+    renderers = {'before': lambda *args: restyle(*args, animations=False), 'after': restyle}
     samples = {name: [] for name in renderers}
     for renderer in renderers.values():
         monkeypatch.setattr(api, 'restyle', renderer)
