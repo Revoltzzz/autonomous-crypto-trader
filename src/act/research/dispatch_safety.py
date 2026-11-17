@@ -33,8 +33,9 @@ GAPS = ("Named hardcoded selection/entry/exit and TA/fill constants not fully mo
         "Resolution-time environment observation is not a cycle-frozen configuration")
 
 
-def digest(value):
-    return hashlib.sha256(encoded(value).encode()).hexdigest()
+def model_source(variable):
+    """These production BaseSettings models use case-insensitive environment names."""
+    return "environment" if any(name.upper() == variable for name in os.environ) else "production_default"
 
 
 def effective_observation(settings):
@@ -55,8 +56,7 @@ def effective_observation(settings):
         models[cls.__name__] = {
             "values": values, "bounds": properties,
             "sources": {name: {"variable": (prefix + name).upper(),
-                "source": "environment" if (prefix + name).upper() in os.environ
-                else "production_default"} for name in values}}
+                "source": model_source((prefix + name).upper())} for name in values}}
     fees = {}
     for market in ("spot", "futures"):
         fees[market] = {}
@@ -92,6 +92,18 @@ def migrate_observation(state, observation, at):
     if (observation.get("schema") != SCHEMA or observation.get("paper_only") is not True
             or observation.get("complete") is not False):
         raise ValueError("Incomplete PAPER observation schema required")
+    required = {"schema", "paper_only", "complete", "models", "risk_limits",
+                "costs", "implementation", "markets", "gaps"}
+    if set(observation) != required or set(observation["markets"]) != set(MARKETS):
+        raise ValueError("Observation is missing required capture sections")
+    if set(observation["models"]) != {cls.__name__ for cls in MODELS}:
+        raise ValueError("Observation settings model inventory mismatch")
+    for cls in MODELS:
+        row = observation["models"][cls.__name__]
+        if any(set(row.get(section, {})) != set(cls.model_fields)
+               for section in ("values", "bounds", "sources")):
+            raise ValueError("Observation settings field inventory mismatch")
+    encoded(observation)  # Reject non-finite and non-JSON payloads before appending.
     result = deepcopy(state)
     previous = result.get("policy_observations", {})
     if previous and set(previous) != set(MARKETS):
@@ -156,3 +168,4 @@ def require_dispatch_off():
     if value == "true":
         raise ValueError("DISPATCH_BLOCKED: complete capture/equivalence unavailable")
     return "hardcoded_v1"
+          
