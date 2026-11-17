@@ -1,17 +1,20 @@
-"""Keyless Binance USDT-M reads only. No configurable host or write interface."""
+"""Allowlisted, keyless Binance reads. No account, signed or order interface."""
 import asyncio
 from dataclasses import dataclass
 import math
+from typing import Literal
 from urllib.parse import urlencode
 
 import httpx
 
-from act.agents import BudgetExceeded, utcnow
+from act.agents import utcnow
 
-BASE = "https://fapi.binance.com/fapi/v1/"
-# Conservative weights for the fixed parameters below; headers may raise usage.
-WEIGHTS = {"exchangeInfo": 1, "ticker/24hr": 40, "klines": 2,
-           "depth": 5, "premiumIndex": 10, "fundingRate": 1}
+Market = Literal["spot", "futures"]
+BASES = {"spot": "https://api.binance.com/api/v3/",
+         "futures": "https://fapi.binance.com/fapi/v1/"}
+WEIGHTS = {"exchangeInfo": 20, "ticker/24hr": 80, "klines": 2, "depth": 5,
+           "premiumIndex": 10, "fundingRate": 1, "openInterest": 1}
+FUTURES_ONLY = {"premiumIndex", "fundingRate", "openInterest"}
 
 
 class BinanceError(RuntimeError):
@@ -51,7 +54,11 @@ def number(value):
 
 
 class BinanceData:
-    def __init__(self, context, *, weight_limit=100, retries=1, sleep=asyncio.sleep):
+    def __init__(self, context, market: Market = "futures", *, weight_limit=200,
+                 retries=1, sleep=asyncio.sleep):
+        if market not in BASES:
+            raise ValueError("Unknown Binance market")
+        self.market = market
         self.context = context
         self.weight_limit = weight_limit
         self.weight_used = 0
@@ -59,49 +66,66 @@ class BinanceData:
         self.retries = min(2, max(0, retries))
         self.sleep = sleep
 
+    def weight(self, endpoint, params):
+        if self.market == "futures":
+            if endpoint == "exchangeInfo":
+                return 1
+            if endpoint == "ticker/24hr":
+                return 40
+        if endpoint == "premiumIndex" and params.get("symbol"):
+            return 1
+        return WEIGHTS[endpoint]
+
     async def read(self, endpoint: str, params: dict | None = None) -> Response:
-        if endpoint not in WEIGHTS:
-            raise ValueError("Only allowlisted public market-data endpoints")
+        if endpoint not in WEIGHTS or (self.market == "spot" and endpoint in FUTURES_ONLY):
+            raise ValueError("Only allowlisted public market-data endpoints for this market")
         params = dict(params or {})
-        allowed = {"klines": {"symbol", "interval", "limit"},
-                   "depth": {"symbol", "limit"}, "fundingRate": {"symbol", "limit"}}
+        allowed = {"klines": {"symbol", "interval", "limit"}, "depth": {"symbol", "limit"},
+                   "fundingRate": {"symbol", "limit"}, "premiumIndex": {"symbol"},
+                   "openInterest": {"symbol"}}
         if set(params) - allowed.get(endpoint, set()):
             raise ValueError("Unsupported public data parameter")
+        if endpoint in ("klines", "depth", "fundingRate", "openInterest"):
+            symbol = params.get("symbol")
+            if not isinstance(symbol, str) or not symbol.isalnum() or not symbol.isascii():
+                raise ValueError("Public instrument symbol required")
         if endpoint == "depth" and params.get("limit") != 20:
             raise ValueError("Depth snapshot limit must be 20")
-        if endpoint == "klines" and (params.get("interval") not in ("1m", "5m", "15m")
+        if endpoint == "klines" and (params.get("interval") not in ("1m", "5m", "15m", "1h", "4h")
                                      or params.get("limit") != 60):
             raise ValueError("Klines require supported interval and limit=60")
         if endpoint == "fundingRate" and params.get("limit") != 100:
             raise ValueError("Funding history limit must be 100")
-        url = BASE + endpoint
+        url = BASES[self.market] + endpoint
         for attempt in range(self.retries + 1):
-            weight = WEIGHTS[endpoint]
+            weight = self.weight(endpoint, params)
             if self.weight_used + weight > self.weight_limit or self.header_weight + weight > 2000:
                 raise RateLimited("Binance conservative request-weight budget exhausted")
             self.weight_used += weight
             request_url = url + ("?" + urlencode(params) if params else "")
             try:
-                # Context owns per-attempt timeout, fetch budget and raw provenance.
                 response = await self.context.fetch(request_url)
             except httpx.HTTPStatusError as exc:
                 response = exc.response
             except (httpx.RequestError, TimeoutError) as exc:
                 raise NetworkError(type(exc).__name__) from exc
-            except BudgetExceeded:
-                raise
+            except ValueError as exc:
+                raise Malformed(str(exc)) from exc
+            source = {"market": self.market, "source_url": url, "params": dict(params),
+                      "fetched_at": utcnow(), "http_status": response.status_code,
+                      "weight_used": self.weight_used}
+            self.context.provenance.append(source)
             try:
                 self.header_weight = max(self.header_weight, int(
                     response.headers.get("x-mbx-used-weight-1m", "0")))
+                if self.header_weight < 0:
+                    raise ValueError
             except ValueError:
                 raise Malformed("Invalid Binance weight header") from None
+            source["observed_weight_1m"] = self.header_weight
             status = response.status_code
-            source = {"source_url": url, "params": params, "fetched_at": utcnow(),
-                      "http_status": status, "weight_used": self.weight_used,
-                      "observed_weight_1m": self.header_weight}
-            self.context.provenance.append(source)
             if status in (403, 451):
-                raise GeoBlocked(f"Binance access denied HTTP {status}; deploy region may be restricted")
+                raise GeoBlocked(f"Binance {self.market} access denied HTTP {status}; no substitute exchange")
             if status == 418:
                 raise RateLimited("Binance IP ban HTTP 418; stop requests")
             if status == 429 or status >= 500:
@@ -141,8 +165,11 @@ class BinanceData:
     async def klines(self, symbol, interval):
         return await self.read("klines", {"symbol": symbol, "interval": interval, "limit": 60})
 
-    async def premium_index(self):
-        return await self.read("premiumIndex")
+    async def premium_index(self, symbol):
+        return await self.read("premiumIndex", {"symbol": symbol})
+
+    async def open_interest(self, symbol):
+        return await self.read("openInterest", {"symbol": symbol})
 
     async def funding_rate(self, symbol):
         return await self.read("fundingRate", {"symbol": symbol, "limit": 100})
