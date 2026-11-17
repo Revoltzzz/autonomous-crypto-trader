@@ -20,6 +20,7 @@ from act.security import enrich_security
 from act.results import capture_results
 from act.readiness import capture_readiness
 from act.agents import run_agents
+from act.agents.scanner import restored_state
 from act.agents.news import news_brief
 from act.agents.telegram import push_brief
 
@@ -175,7 +176,16 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 log.exception("LEARNING_FAILED; no substitute checkpoint or observations")
         # Research-only post-decision hook: never an input to strategy or execution.
         try:
+            try:
+                report["scanner_state"] = await asyncio.to_thread(restored_state, store)
+            except Exception as exc:
+                log.exception("SCANNER_STATE_RESTORE_FAILED; coverage reset explicitly")
+                report["scanner_state"] = {"seen": {}}
+                report["scanner_state_error"] = type(exc).__name__
             report["agents"] = await run_agents(report, client=client)
+            scanner = report["agents"].get("scanner", {}).get("data", {})
+            report["scanner_state"] = scanner.get("state", report.get("scanner_state", {}))
+            report["market_analysis"] = {k: report["agents"].get(k) for k in ("scanner", "technical")}
         except Exception as exc:
             log.exception("AGENT_HOOK_FAILED; trading cycle remains isolated")
             report["agents"] = {"news": {"status": "failed", "provenance": [],
@@ -212,3 +222,4 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
 if __name__ == "__main__":
     setup_logging()
     asyncio.run(run_cycle())
+    
