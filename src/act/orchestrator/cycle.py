@@ -183,9 +183,14 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["scanner_state"] = {"seen": {}}
                 report["scanner_state_error"] = type(exc).__name__
             report["agents"] = await run_agents(report, client=client)
-            scanner = report["agents"].get("scanner", {}).get("data", {})
-            report["scanner_state"] = scanner.get("state", report.get("scanner_state", {}))
-            report["market_analysis"] = {k: report["agents"].get(k) for k in ("scanner", "technical")}
+            for market in ("spot", "futures"):
+                scanner = report["agents"].get("scanner_" + market, {}).get("data", {})
+                if "state" in scanner:
+                    report["scanner_state"][market] = scanner["state"]
+            report["market_analysis"] = {market: {
+                "scanner": report["agents"].get("scanner_" + market),
+                "technical": report["agents"].get("technical_" + market)
+            } for market in ("spot", "futures")}
         except Exception as exc:
             log.exception("AGENT_HOOK_FAILED; trading cycle remains isolated")
             report["agents"] = {"news": {"status": "failed", "provenance": [],
@@ -222,4 +227,3 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
 if __name__ == "__main__":
     setup_logging()
     asyncio.run(run_cycle())
-    
