@@ -301,3 +301,77 @@ def test_reporting_escape_separate_markets_empty_and_failed():
     html = scanner_panel(report)
     assert "GeoBlocked" in html and "&lt;script&gt;" in html and "<script>" not in html
     assert "As of fixture" in html and "overflow-wrap:anywhere" in html
+
+@pytest.mark.parametrize("market,base,prefix", [
+    ("spot", "https://api.binance.com", "/api/v3/"),
+    ("futures", "https://fapi.binance.com", "/fapi/v1/"),
+])
+def test_base_defaults(monkeypatch, market, base, prefix):
+    monkeypatch.delenv(f"BINANCE_{market.upper()}_BASE_URL", raising=False)
+    async def run(ctx):
+        result = await BinanceData(ctx, market).exchange_info()
+        assert result.provenance["base_url"] == base
+        assert result.provenance["source_url"] == base + prefix + "exchangeInfo"
+    asyncio.run(with_context(run))
+
+
+@pytest.mark.parametrize("base", ["https://api.binance.com", "https://data-api.binance.vision"])
+def test_spot_override_end_to_end(monkeypatch, base):
+    monkeypatch.setenv("BINANCE_SPOT_BASE_URL", base)
+    calls = []
+    def respond(request):
+        calls.append(request)
+        return fixture_response(request)
+    async def run(ctx):
+        api = BinanceData(ctx, "spot")
+        results = [await api.exchange_info(), await api.tickers(),
+                   await api.klines("AAAUSDT", "1m"), await api.depth("AAAUSDT")]
+        assert len(calls) == 4
+        for request, result in zip(calls, results):
+            assert str(request.url).startswith(base + "/api/v3/")
+            assert result.provenance["base_url"] == base
+            assert result.provenance in ctx.provenance
+    asyncio.run(with_context(run, respond))
+
+
+def test_futures_explicit_override(monkeypatch):
+    monkeypatch.setenv("BINANCE_FUTURES_BASE_URL", "https://fapi.binance.com")
+    async def run(ctx):
+        result = await BinanceData(ctx).open_interest("AAAUSDT")
+        assert result.provenance["base_url"] == "https://fapi.binance.com"
+        assert result.provenance["source_url"].endswith("/fapi/v1/openInterest")
+    asyncio.run(with_context(run))
+
+
+@pytest.mark.parametrize("market", ["spot", "futures"])
+@pytest.mark.parametrize("bad", [
+    "", "http://api.binance.com", "https://example.com",
+    "https://api.binance.com.evil.example", "https://" + "user" + "@" + "api.binance.com",
+    "https://api.binance.com:443", "https://api.binance.com/",
+    "https://api.binance.com/api/v3", "https://api.binance.com?x=1",
+    "https://api.binance.com#fragment", " https://api.binance.com",
+])
+def test_invalid_base_rejected_before_fetch(monkeypatch, market, bad):
+    monkeypatch.setenv(f"BINANCE_{market.upper()}_BASE_URL", bad)
+    async def run(ctx):
+        with pytest.raises(ValueError, match="official origin required"):
+            BinanceData(ctx, market)
+        assert ctx.used == 0 and not ctx.provenance
+    asyncio.run(with_context(run))
+
+
+def test_vision_not_futures(monkeypatch):
+    monkeypatch.setenv("BINANCE_FUTURES_BASE_URL", "https://data-api.binance.vision")
+    with pytest.raises(ValueError, match="official origin required"):
+        BinanceData(None)
+
+
+@pytest.mark.parametrize("status", [403, 451])
+def test_override_geoblock_provenance(monkeypatch, status):
+    monkeypatch.setenv("BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision")
+    async def run(ctx):
+        with pytest.raises(GeoBlocked):
+            await BinanceData(ctx, "spot").exchange_info()
+        assert ctx.provenance[0]["base_url"] == "https://data-api.binance.vision"
+        assert ctx.provenance[0]["http_status"] == status
+    asyncio.run(with_context(run, lambda r: httpx.Response(status)))
