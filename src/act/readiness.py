@@ -1,5 +1,6 @@
 """Evidence only. DISPLAY_REFERENCES are NEVER strategy inputs or trading gates.
 
+
 Pure computations plus read-only record loading and an escaped dashboard view.
 No quotes, optimization, extrapolation, backfill or execution capability.
 """
@@ -11,6 +12,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from statistics import mean, median
 from time import perf_counter
+
 
 VERSION = "readiness-v1"
 DISPLAY_MIN_TRADES = 100
@@ -33,6 +35,8 @@ WARNING = ("SMALL-N: descriptive observed samples only; no extrapolation. Render
 LOG = logging.getLogger(__name__)
 
 
+
+
 def date(value):
     try:
         at = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -41,13 +45,19 @@ def date(value):
         return None
 
 
+
+
 def number(value):
     return type(value) in (int, float) and math.isfinite(value)
+
+
 
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False,
                                     separators=(",", ":")).encode()).hexdigest()
+
+
 
 
 def metric(value, n, start, caveat, available=True):
@@ -56,12 +66,17 @@ def metric(value, n, start, caveat, available=True):
             "caveats": caveat + " " + WARNING}
 
 
+
+
 def project(report):
     return {k: report.get(k) for k in CYCLE_FIELDS}
 
 
+
+
 def load_cycles(store, cutoff):
     """Read compact projections, paginated over ALL durable cycles, not dashboard's 30.
+
 
     10k safety cap fails loudly rather than misreporting a truncated lifetime window.
     No readiness snapshots are written into old cycles. Local history scope is explicit.
@@ -87,6 +102,8 @@ def load_cycles(store, cutoff):
             and date(r["finished_at"]) < date(cutoff)]
 
 
+
+
 def health_flags(report):
     """Conservative recorded-health proxy, not an issue tracker or security audit."""
     flags = []
@@ -106,8 +123,11 @@ def health_flags(report):
     return flags
 
 
+
+
 def compute(report, cycles, computed_at):
     """Replay with the same report, projected stored cycles and computed_at.
+
 
     Current report is a pending input, committed atomically with this snapshot.
     Net realized_pnl ALREADY includes modeled fees and slipped prices: never subtract twice.
@@ -212,6 +232,11 @@ def compute(report, cycles, computed_at):
         item["status"] = "insufficient_data" if item["status"] == "insufficient_data" else "pass" if passed else "fail"
         gates[key] = item
     return {"version": VERSION, "computed_at": computed_at, "display_only": True,
+        "market_breakdown": {market: {"n": len(rows), "realized_pnl": sum(t["realized_pnl"] for t in rows)
+            if all(number(t.get("realized_pnl")) for t in rows) else None,
+            "open_n": sum(p.get("market", "solana") == market for p in positions)}
+            for market in ("solana", "spot", "futures")
+            for rows in [[t for t in trades if t.get("market", "solana") == market]]},
         "gates": gates, "metrics": metrics, "health_flags": affected,
         "open_context": {"n": len(positions) if trades_known else None, "positions": positions,
                          "caveat": "Open unrealized P&L is NOT expectancy or realized profit factor."},
@@ -223,6 +248,8 @@ def compute(report, cycles, computed_at):
             "cycle_fields": list(CYCLE_FIELDS), "history_cutoff_exclusive": report.get("started_at"),
             "window": "all retained projected cycles + current cycle; full closed ledger",
             "replay": "compute(current_report, projected_persisted_cycles, computed_at); SHA256 canonical sorted JSON"}}
+
+
 
 
 def capture_readiness(report, store):
@@ -243,8 +270,11 @@ def capture_readiness(report, store):
         LOG.exception("READINESS_FAILED; no substituted metrics; strategy unchanged")
 
 
+
+
 def readiness_panel(report, reports):
     from act.results import raw, table, text
+
 
     out = '<section id="readiness"><h2>Strategy validation / readiness (evidence only)</h2>'
     out += '<p>DISPLAY ONLY — not permission for real money. No strategy gates or enforcement.</p>'
@@ -261,6 +291,7 @@ def readiness_panel(report, reports):
     out += '<details><summary>Supporting metrics (small-n, costs, durations, exit reasons)</summary>'
     out += table([dict(m, gate=k) for k, m in snapshot["metrics"].items()],
                  [c for c in columns if c[0] != "threshold"], "No metrics") + '</details>'
+    out += raw(snapshot.get("market_breakdown", {}))
     out += '<details><summary>Open position context (not closed performance)</summary>' + raw(snapshot["open_context"]) + '</details>'
     out += '<details><summary>Replay provenance and recorded health flags</summary>' + raw(snapshot["provenance"]) + raw(snapshot["health_flags"]) + '</details>'
     history = [{"at": r["readiness"]["computed_at"], "passing": sum(g["status"] == "pass" for g in r["readiness"]["gates"].values())}
