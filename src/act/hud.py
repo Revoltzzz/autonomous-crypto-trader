@@ -440,21 +440,26 @@ def restyle(page, report, reports, error=None, *, animations=True):
     head, main, contents = page.partition('<main>')
     body, closing, tail = contents.rpartition('</main>')
     start = body.rfind('<section><h2>// NEWS (research only)</h2>')
-    if start < 0 or not main or not closing:
-        raise ValueError('HUD NEWS panel/main boundary missing')
-    end = body.index('</section>', start) + len('</section>')
-    news = body[start:end]
-    overview = body[:start] + body[end:]
+    if not main or not closing:
+        raise ValueError('HUD main boundary missing')
+    if start < 0:
+        from act.agents.news import news_panel
+
+        news, overview = news_panel(report), body
+    else:
+        end = body.index('</section>', start) + len('</section>')
+        news = body[start:end]
+        overview = body[:start] + body[end:]
     tabs = ('<nav aria-label="Dashboard views"><button type="button" '
             'id="overview-tab" aria-controls="overview-panel" aria-expanded="true">OVERVIEW</button> '
             '<button type="button" id="news-tab" aria-controls="news-panel" '
             'aria-expanded="false">NEWS</button></nav>')
     styles = TAB_CSS + (MOTION_CSS if animations else '')
     scripts = TAB_SCRIPT + (MOTION_SCRIPT if animations else '')
-    return (head.replace('</style>', styles + '</style>', 1) + main + tabs
-            + '<div id="overview-panel">' + overview + '</div>'
-            + '<div id="news-panel" hidden>' + news + '</div>'
-            + scripts + closing + tail)
+    return ''.join((head.replace('</style>', styles + '</style>', 1), main, tabs,
+                    '<div id="overview-panel">', overview, '</div>',
+                    '<div id="news-panel" hidden>', news, '</div>',
+                    scripts, closing, tail))
 
 
 TAB_CSS = '''
