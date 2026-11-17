@@ -10,19 +10,22 @@ from time import monotonic
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from xml.etree import ElementTree as ET
 
+
 from act.agents import BudgetExceeded, utcnow
+
 
 LOG = logging.getLogger(__name__)
 # Explicit editorial groups: additional feeds from an outlet never count as another outlet.
 FEEDS = (
-    ('CoinDesk', 'coindesk', 'https://www.coindesk.com/arc/outboundfeeds/rss/', False),
+    ('CoinDesk', 'coindesk', 'https://www.coindesk.com/arc/outboundfeeds/rss', False),
     ('Cointelegraph', 'cointelegraph', 'https://cointelegraph.com/rss', False),
     ('The Block', 'theblock', 'https://www.theblock.co/rss.xml', False),
     ('Decrypt', 'decrypt', 'https://decrypt.co/feed', False),
-    ('Coinbase', 'coinbase', 'https://www.coinbase.com/blog/rss.xml', True),
     ('Federal Reserve', 'federalreserve', 'https://www.federalreserve.gov/feeds/press_all.xml', True),
 )
 NEXT_FETCH = {}
+
+
 
 
 def canonical(url):
@@ -33,8 +36,12 @@ def canonical(url):
     return urlunsplit((p.scheme.lower(), p.netloc.lower(), p.path, urlencode(query), ''))
 
 
+
+
 def normalized(title):
     return ' '.join(re.findall(r"[a-z0-9]+", title.casefold()))
+
+
 
 
 def classify(title):
@@ -52,6 +59,8 @@ def classify(title):
     return 'token-specific', []
 
 
+
+
 def score(title):
     category, hits = classify(title)
     base = {'macro': 4, 'regulatory': 4, 'exchange': 3, 'solana-ecosystem': 3,
@@ -64,11 +73,15 @@ def score(title):
     return base, reasons
 
 
+
+
 def child_text(node, names):
     for child in node:
         if child.tag.rsplit('}', 1)[-1] in names and child.text:
             return ' '.join(child.text.split())
     return ''
+
+
 
 
 def parse_feed(content, feed, fetched_at):
@@ -114,6 +127,8 @@ def parse_feed(content, feed, fetched_at):
     return items
 
 
+
+
 def same_event(a, b):
     # Deliberately high precision/low recall: fuzzy grouping is NOT corroboration.
     key = normalized(a['title'])
@@ -123,6 +138,8 @@ def same_event(a, b):
         return False
     return abs((datetime.fromisoformat(a['published_at']) -
                 datetime.fromisoformat(b['published_at'])).total_seconds()) <= 86400
+
+
 
 
 def build_items(rows):
@@ -170,11 +187,15 @@ def build_items(rows):
     return sorted(result, key=lambda item: (item['verification'] == 'verified', item['relevance_score']), reverse=True)
 
 
+
+
 class NewsAgent:
     name = 'news'
 
+
     def describe(self):
         return 'Keyless public RSS/Atom headlines; conservative verification; no trade signals.'
+
 
     async def run(self, context):
         rows, errors, skipped = [], [], []
@@ -183,6 +204,7 @@ class NewsAgent:
             if monotonic() < NEXT_FETCH.get(url, 0):
                 skipped.append({'url': url, 'reason': 'Feed cooldown (including Retry-After)'})
                 continue
+            response = None
             try:
                 response = await context.fetch(url)
                 rows.extend(parse_feed(response.content, feed, utcnow()))
@@ -192,7 +214,7 @@ class NewsAgent:
                 break
             except Exception as exc:
                 delay = 60
-                response = getattr(exc, 'response', None)
+                response = getattr(exc, 'response', None) or response
                 if response is not None and response.status_code == 429:
                     value = response.headers.get('Retry-After', '60')
                     try:
@@ -204,13 +226,16 @@ class NewsAgent:
                             delay = 300
                 NEXT_FETCH[url] = monotonic() + min(delay, 86400)
                 LOG.exception('NEWS_FEED_FAILED source=%s', url)
-                errors.append({'source_url': url, 'error': type(exc).__name__})
+                errors.append({'source_url': url, 'error': type(exc).__name__,
+                               'http_status': response.status_code if response is not None else None})
             await asyncio.sleep(min(.1, context.remaining))
         items = build_items(rows)
         if not items and errors:
             raise RuntimeError('All available news fetches failed; see feed tracebacks')
         return {'as_of': utcnow(), 'items': items, 'errors': errors, 'skipped': skipped,
                 'status': 'degraded' if errors or skipped else 'success'}
+
+
 
 
 def news_brief(agents):
@@ -222,6 +247,8 @@ def news_brief(agents):
             'source_status': data.get('status'), 'total': len(items), 'verified': len(verified),
             'unverified': len(items) - len(verified), 'top_verified': verified[:5],
             'errors': data.get('errors', []), 'skipped': data.get('skipped', [])}
+
+
 
 
 def news_panel(report):
