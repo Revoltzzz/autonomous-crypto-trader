@@ -331,7 +331,7 @@ class TradeExecutionSimulationAgent:
             raise ValueError("DUPLICATE_ORDER")
         p = {**approved, "token": approved["symbol"], "entry_price": price,
              "opened_at": now, "fees_paid": fee, "funding_paid": 0., "funding_through": now,
-             "mark": price, "mark_at": now, "peak": price, "partial": False,
+             "mark": positive(evidence.get("anchor", price)), "mark_at": now, "peak": price, "partial": False,
              "execution": evidence, "exit_intent": None}
         state["positions"][p["id"]] = p
         state["used"].append(p["id"])
