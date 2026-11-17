@@ -4,13 +4,19 @@ import logging
 import math
 from statistics import mean, pstdev
 
-from act.agents import BudgetExceeded, utcnow
+
+from act.agents import BudgetExceeded, thaw, utcnow
 from act.binance_data import BinanceData, BinanceError, GeoBlocked, Malformed, number
+
 
 LOG = logging.getLogger(__name__)
 
 
+
+
 TIMEFRAMES = ("1m", "5m", "15m", "1h", "4h")
+
+
 
 
 def universe(info, tickers, market):
@@ -40,6 +46,8 @@ def universe(info, tickers, market):
         raise Malformed("Invalid exchangeInfo or ticker schema") from None
 
 
+
+
 def candles(data, as_of):
     try:
         rows = []
@@ -55,6 +63,8 @@ def candles(data, as_of):
         return rows
     except (IndexError, TypeError):
         raise Malformed("Invalid kline schema") from None
+
+
 
 
 def indicators(rows):
@@ -80,6 +90,8 @@ def indicators(rows):
                                                          if sum(r[5] for r in rows) else None)}}
 
 
+
+
 def liquidity(data):
     try:
         bids = [(number(p), number(q)) for p, q in data["bids"]]
@@ -97,6 +109,8 @@ def liquidity(data):
                 "method": "top-20 snapshot proxy, not executable liquidity"}
     except (KeyError, TypeError, ValueError):
         raise Malformed("Invalid depth schema") from None
+
+
 
 
 def structure(rows):
@@ -120,6 +134,8 @@ def structure(rows):
                          "recent_high": rh, "recent_low": rl, "previous_high": ph, "previous_low": pl}}
 
 
+
+
 def restored_state(store):
     from act.results import load_reports
     reports = load_reports(store)
@@ -137,11 +153,15 @@ def restored_state(store):
     return (reports[0].get("scanner_state") or {}) if reports else {}
 
 
+
+
 def coverage_state(old, symbols):
     previous = old.get("universe")
     return {"universe_size": len(symbols), "universe_diff_baseline_available": previous is not None,
             "instruments_added": len(symbols - set(previous)) if previous is not None else None,
             "instruments_removed": len(set(previous) - symbols) if previous is not None else None}
+
+
 
 
 class MarketScannerAgent:
@@ -150,8 +170,10 @@ class MarketScannerAgent:
             raise ValueError("Unknown market")
         self.market, self.name = market, "scanner_" + market
 
+
     def describe(self):
         return "Rotating Binance " + self.market + " public evidence; analysis only"
+
 
     async def run(self, context):
         api = BinanceData(context, self.market)
@@ -226,6 +248,8 @@ class MarketScannerAgent:
         return out
 
 
+
+
 def directional_score(frames):
     evidence = [max(-2, min(2, f["momentum_pct"] / max(f["atr_pct"], .01))) for f in frames]
     up = 1 / (1 + math.exp(-mean(evidence)))
@@ -235,6 +259,8 @@ def directional_score(frames):
             "timeframe_agreement": len(set(directions)) == 1,
             "method": "Uncalibrated logistic momentum/ATR heuristic; NOT a forecast probability",
             "reasons": [f"Momentum/ATR bounded evidence {v}" for v in evidence]}
+
+
 
 
 def challenges(rows):
@@ -249,14 +275,18 @@ def challenges(rows):
     return ordered, disagreements
 
 
+
+
 class TechnicalAnalysisAgent:
     def __init__(self, market="futures"):
         if market not in ("spot", "futures"):
             raise ValueError("Unknown market")
         self.market, self.name = market, "technical_" + market
 
+
     def describe(self):
         return "Five-timeframe " + self.market + " evidence, structure and ranking challenges"
+
 
     async def run(self, context):
         scanner = (context.snapshot.get("agents") or {}).get("scanner_" + self.market) or {}
@@ -265,7 +295,7 @@ class TechnicalAnalysisAgent:
         out = {"market": self.market, "as_of": utcnow(), "status": "success", "candidates": [],
                "errors": [], "disagreements": [], "requested_candidates": len(data.get("candidates") or []),
                "scanner_status": data.get("status") or scanner.get("status"),
-               "scanner_error": data.get("error") or scanner.get("error")}
+               "scanner_error": thaw(data.get("error") or scanner.get("error"))}
         for rank, row in enumerate(data.get("candidates") or [], 1):
             if context.fetch_limit - context.used < len(TIMEFRAMES):
                 break
