@@ -91,7 +91,7 @@ def news_context(items, decision_at, terms=(), *, since=None):
         if not sources:
             continue
         times = [timestamp(s["fetched_at"]) for s in sources]
-        if any(t > cutoff for t in times) or (lower and not any(t >= lower for t in times)):
+        if any(t >= cutoff for t in times) or (lower and not any(t >= lower for t in times)):
             continue
         tokens = set(re.findall(r"[\w]+", item["title"].casefold()))
         if wanted and not wanted.intersection(tokens):
@@ -113,4 +113,4 @@ def shadow_record(version_id, market, at, decision, context):
     return {"record_type": "shadow", "strategy_version_id": version_id, "market": market,
             "at": at, "decision": deepcopy(decision), "news_context": deepcopy(context),
             "ledger_eligible": False}
-  
+    
