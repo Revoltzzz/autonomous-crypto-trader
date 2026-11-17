@@ -179,6 +179,8 @@ def compute(report, cycles, computed_at):
     snapshots = [(r.get("cycle_id"), r.get("equity_snapshot")) for r in inputs]
     valid = [(cid, s) for cid, s in snapshots if isinstance(s, dict) and date(s.get("timestamp"))
              and date(s["timestamp"]) <= at and number(s.get("equity")) and s["equity"] > 0]
+    scope = (report.get("equity_snapshot") or {}).get("scope", "solana")
+    valid = [(cid, s) for cid, s in valid if s.get("scope", "solana") == scope]
     valid.sort(key=lambda row: date(row[1]["timestamp"]))
     peak, dd = None, 0.0
     for _, s in valid:
@@ -186,7 +188,7 @@ def compute(report, cycles, computed_at):
         dd = max(dd, (peak - s["equity"]) / peak * 100)
     metrics["max_drawdown_pct"] = metric(dd if len(valid) >= 2 else None, len(valid),
         valid[0][1]["timestamp"] if valid else None,
-        "Observed equity snapshots ONLY; not intracycle/lifetime drawdown before capture began. "
+        "Observed equity snapshots of the current capital scope ONLY; a new market allocation starts a new comparable window, never a profit. "
         + str(len(snapshots) - len(valid)) + " missing/invalid snapshots; gaps not interpolated. "
         + "Window end: " + (valid[-1][1]["timestamp"] if valid else "unavailable"), len(valid) >= 2)
     durations = [(end - date(t.get("opened_at"))).total_seconds() / 3600
