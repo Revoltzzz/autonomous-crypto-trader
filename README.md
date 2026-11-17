@@ -318,6 +318,62 @@ balance; wrapped SOL returned topHolders=null and zero supply. Both are unavaila
 one AICoin uiAmount disagreed with amount/uiAmountString. Use raw integer amounts only.
 
 Fallback computes 100 * sum(top N eligible raw account balances) / raw mint supply.
+
+
+## Spot bulk-response size limits (2026-11-17, PAPER ONLY)
+
+Deploy-reported cycle 1e803d47-c601-4b74-afea-f00385c0f05a at 13:39 UTC
+received HTTP 200 from the vision Spot origin, then failed Malformed with
+"Feed exceeds 2MB limit". HTTP geo-unblocking alone did not restore scanning.
+
+Only exact HTTPS api.binance.com or data-api.binance.vision unparameterized
+/api/v3/exchangeInfo and /api/v3/ticker/24hr URLs get larger caps:
+
+| Environment override | Default decoded bytes |
+| --- | ---: |
+| BINANCE_SPOT_EXCHANGE_INFO_MAX_BYTES | 24,000,000 |
+| BINANCE_SPOT_TICKER_MAX_BYTES | 4,000,000 |
+
+Overrides follow the existing os.environ pattern and must be integer bytes in
+[1, 32,000,000]; invalid configuration fails loudly. Without env, these defaults
+apply. The hard 32MB ceiling is a safety policy, not measured memory capacity.
+News/RSS and all other fetch paths retain exactly 2,000,000 bytes and their
+existing HTTP path. Futures remains fapi.binance.com (expected 451 unchanged),
+and per-symbol klines/depth stay unchanged. Redirects outside the bulk scope
+fall back to 2,000,000 bytes rather than inherit a larger allowance.
+
+Browser observations on 2026-11-17: [exchangeInfo](https://data-api.binance.vision/api/v3/exchangeInfo)
+returned 200, 17,818,840 decoded bytes, 3,743 symbols and reported Content-Length
+333,163 (compressed). The [ticker/24hr](https://data-api.binance.vision/api/v3/ticker/24hr)
+JSON viewed measured 1,906,568 UTF-8 bytes: below 2MB in this sample, not proof
+of a permanent maximum. These are one-time browser observations, NOT Render
+measurements. 24MB gives about 35% headroom and 4MB about 2x the ticker sample;
+headroom is an explicit assumption, not a Binance size guarantee.
+[Official documentation](https://developers.binance.com/en/docs/products/spot/faqs/market_data_only)
+confirms the domain and endpoints but supplies no payload-size SLA.
+
+Bulk reads use httpx streaming and 65,536-byte decoded chunks, rejecting an
+oversize reported length early and checking decoded bytes before extending the
+buffer. Missing, dishonest or compressed Content-Length cannot bypass the decoded
+cap. Errors name the cap plus reported size or decoded lower bound and retain
+ValueError -> Binance Malformed taxonomy. Failed-fetch provenance still includes
+base_url and HTTP status. Stream contexts close on failure/cancellation.
+
+Memory tradeoff: the full bounded decoded body is still retained for json();
+this is not streaming JSON parsing. bytearray-to-bytes copying, decoder transient
+allocations and parsed Python objects add memory beyond the cap. Peak RSS is not
+measured; a 24MB JSON cap does not mean 24MB RAM. Existing news buffering is
+unchanged. No new dependency, strategy, scanner-selection, immutable-snapshot,
+Render, key, signed-endpoint or execution change is included. PAPER ONLY.
+
+Offline tests generate JSON at the observed exchangeInfo size (a size fixture,
+not an exchange-schema fixture), exercise both limits and exact boundaries,
+news/non-Spot isolation, env overrides/validation, chunked early abort/close,
+compression, redirect isolation, Malformed/provenance and unchanged futures 451.
+CI ruff + pytest is the validator; no local shell/Python run is claimed.
+Merge approval and deploy verification remain necessary before claiming complete
+Spot scanning: exchangeInfo, ticker, per-symbol calls, TA and any PAPER decisions
+must all be observed after deployment.
 Exclude candidate-pool-owned token accounts and incinerator-owned accounts, plus literal
 1nc1nerator11111111111111111111111111111111; never reduce supply by excluded amounts.
 Candidate pool identity must match a report market pubkey, the matching mint side,
