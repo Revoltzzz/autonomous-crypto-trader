@@ -220,7 +220,7 @@ def test_pipeline_queues_without_decision_tick_fill(monkeypatch, tmp_path):
     ledger = PaperLedger(tmp_path / "ledger.json")
     s = asyncio.run(bp.run_pipeline(report, ledger))
     assert len(s["pending"]) == 1 and not s["positions"]
-    assert report["paper_account"]["equity"] == 30000 and report["binance_learning"]["n"] == 1
+    assert report["portfolio_account"]["equity"] == 30000 and report["binance_learning"]["n"] == 1
     assert report["binance_paper"]["decisions"][0]["action"] == "APPROVE"
     with pytest.raises(RuntimeError, match="Duplicate Binance cycle"):
         asyncio.run(bp.run_pipeline(report, ledger))
