@@ -744,7 +744,8 @@ universe counts: active Spot-tradable symbols versus TRADING USDT perpetuals.
 Quote-volume percentiles are computed within each quote currency (quote_group_n
 recorded); Spot quote currencies are not treated as interchangeable USD values.
 Priority combines that percentile with absolute24h percentage change. Least
-recently completed symbols are scanned first, priority breaking ties.
+recently completed symbols are scanned first, priority breaking ties (Futures;
+Spot now applies the mover-priority policy below before rotation).
 
 Completed scans require depth + completed1m bars, plus OI/premium for Futures.
 Coverage counts only completed scans, never ticker rows or attempts. Ranked top5
@@ -763,7 +764,8 @@ no migration. Newest durable report restores state; local UUID cycle directories
 restore the newest sibling report. Restore errors produce loud tracebacks and an
 explicitly labeled reset, never claimed uninterrupted cumulative coverage. State
 is single-worker like the ledger. Agent timeouts may undercount returned work,
-but never invent coverage. Missing tickers remain unscanned universe members.
+but never invent coverage. Spot ticker data gaps now use the explicitly labeled
+rotation fallback below; no partial or stale mover ranking is used.
 
 TA requires all five frames1m/5m/15m/1h/4h per completed candidate, each up to60
 bars and at least20 ordered completed candles. In-progress bars are excluded.
@@ -803,6 +805,56 @@ errors/weights/backoff/allowlist, rotation/coverage/geo handling, indicators,
 structure/heuristics, TA/challenges, state restore and escaped reporting.
 Browser-only development does NOT claim local pytest/ruff runs; PR CI validates.
 
+
+### Spot mover-priority selection (PAPER ONLY)
+
+Spot reuses the full-market 24-hour ticker fetched in this cycle. Positive
+priceChangePercent values rank descending as gainers; negative values rank
+ascending as losers; ties use symbol ascending and zero is neither. Only current
+TRADING, Spot-allowed exchangeInfo symbols qualify. Set
+BINANCE_SPOT_MOVER_TOP_N (integer 0..10, default 1; 0 disables mover priority).
+Selection interleaves gainer rank 1, loser rank 1, then rank 2, etc., up to N per
+side; the existing least-recently-completed rotation fills the remaining budget.
+Rotation indices are zero-based positions in that cycle's full rotation order.
+Futures selection is unchanged.
+
+Ranking adds ZERO API calls or request weight: it changes WHICH symbols receive
+the existing depth/1m requests, not how many. Fetch/time limits, payload caps,
+retry accounting and the conservative weight guard remain unchanged. The default
+six-fetch budget normally permits at most two Spot scans (100 bulk weight plus
+14 for two scans), and can permit fewer or none after failures/retries. Ranking
+the entire eligible ticker universe is not scanning it. Large N can crowd out
+rotation; mover-chasing and repeated-selection bias are explicit research risks,
+not an advantage or profit claim. Report small-n results as such.
+
+A missing, malformed, duplicate or incomplete eligible ticker set is NEVER ranked,
+and no prior ticker snapshot is reused. The scanner logs
+SPOT_MOVER_ROTATION_FALLBACK and records a data gap, discards all ticker metrics,
+and attempts current-exchangeInfo rotation only within the remaining budgets.
+Change/volume/suitability score are null on fallback, never synthetic zeros.
+If exchangeInfo is unavailable, or budgets/access prevent further scans, coverage
+can remain zero; no fabricated universe or completed work is reported.
+
+Every completed symbol records selection basis (top_gainer/top_loser with rank
+and priceChangePercent, or rotation with index) plus the ranking snapshot SHA256.
+Failed symbol attempts retain the same selection provenance in errors. The
+canonical, detached JSON ranking snapshot carries cycle ID, timestamp, complete
+positive/negative rankings, top-N, current ticker provenance and any gap. It lives
+in that cycle's existing persisted report, never in the rolling scanner checkpoint;
+new cycles append separate reports rather than editing old rankings. Downstream
+agents see the existing recursively frozen snapshot. The hash detects accidental
+payload changes; this is not a new tamper-proof database or retention guarantee.
+Existing single-worker/cycle-ID-idempotent persistence and its failure reporting
+still apply. HUD summaries read this stored snapshot and recorded scan counts,
+not a new fetch; escaping, wrapping, PAPER MODE / LAST STORED STATE remain.
+
+**Losers are RESEARCH / BOUNCE-WATCH ONLY. Spot is LONG-ONLY: NO SHORTING.**
+Negative-change candidates (including rotation picks) carry that label through
+the existing scanner-to-paper candidate merge. A top gainer earns no automatic
+approval. Manipulation heuristics, full TA corroboration and all risk-agent
+vetoes apply unchanged. No changes to TA, risk limits, execution, Solana, futures,
+news or strategy/research registry behavior. See
+[src/act/agents/README.md](src/act/agents/README.md) for module details.
 
 ## Build 3: Binance PAPER execution and risk
 

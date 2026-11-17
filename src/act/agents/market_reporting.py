@@ -1,5 +1,6 @@
 """Escaped stored analysis; markets and their coverage are never combined."""
 from html import escape
+import hashlib
 import json
 
 
@@ -22,6 +23,8 @@ def scanner_panel(report):
                 out += '<p>Completed scans this cycle: ' + escape(str(coverage.get("scanned_this_cycle")))
                 out += ' / Universe: ' + escape(str(coverage.get("universe_size")))
                 out += ' · Cumulative unique: ' + escape(str(coverage.get("cumulative_unique"))) + '</p>'
+            if market == "spot" and key == "scanner_":
+                out += mover_panel(data)
             if not data.get("candidates"):
                 out += '<p>No completed candidates available. Coverage is not implied.</p>'
             for row in data.get("candidates") or []:
@@ -37,3 +40,28 @@ def scanner_panel(report):
                     '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%">'
                     + escape(json.dumps(recorded, indent=2, allow_nan=False)) + '</pre></details>')
     return out + '</section>'
+
+def mover_panel(data):
+    """Only stored cycle evidence, never a live request or recomputed ranking."""
+    snapshot = data.get("mover_snapshot")
+    if not snapshot:
+        return '<p>Mover ranking unavailable in this stored cycle.</p>'
+    try:
+        payload = snapshot["payload_json"]
+        if hashlib.sha256(payload.encode()).hexdigest() != snapshot["sha256"]:
+            raise ValueError("Snapshot checksum mismatch")
+        ranking = json.loads(payload)
+        summary = {"as_of": ranking["as_of"], "status": ranking["status"],
+                   "top_n": ranking["top_n"], "eligible_n": ranking["eligible_n"],
+                   "gainers": ranking["gainers"][:ranking["top_n"]],
+                   "losers": ranking["losers"][:ranking["top_n"]],
+                   "data_gaps": ranking["data_gaps"], "loser_label": ranking["loser_label"]}
+        coverage = data.get("coverage") or {}
+        summary.update(mover_priority_scanned=coverage.get("mover_priority_scanned", 0),
+                       rotation_scanned=coverage.get("rotation_scanned", 0),
+                       scanned_selections=coverage.get("selections", []))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        summary = {"status": "MOVER SNAPSHOT UNAVAILABLE / INVALID", "error": str(exc)}
+    return ('<h4>Stored mover ranking / selection basis</h4>'
+            '<pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%">'
+            + escape(json.dumps(summary, indent=2, allow_nan=False)) + '</pre>')

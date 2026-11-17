@@ -162,7 +162,9 @@ def test_universe_priority_and_runtime_size(market):
 
 
 @pytest.mark.parametrize("market,budget,completed", [("spot", 4, 1), ("futures", 6, 1)])
-def test_rotation_and_honest_coverage(market, budget, completed):
+def test_rotation_and_honest_coverage(market, budget, completed, monkeypatch):
+    # Isolate legacy rotation policy; mover selection has its own fixture tests.
+    monkeypatch.setenv("BINANCE_SPOT_MOVER_TOP_N", "0")
     async def run(ctx):
         result = await MarketScannerAgent(market).run(ctx)
         assert result["coverage"]["scanned_this_cycle"] == completed

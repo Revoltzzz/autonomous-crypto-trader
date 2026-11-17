@@ -6,6 +6,7 @@ from statistics import mean, pstdev
 
 
 from act.agents import BudgetExceeded, thaw, utcnow
+from act.agents.movers import configured_top_n, rotation_rows, selection_plan
 from act.binance_data import BinanceData, BinanceError, GeoBlocked, Malformed, number
 
 
@@ -189,11 +190,36 @@ class MarketScannerAgent:
         if context.snapshot.get("scanner_state_error"):
             out["status"] = "degraded"
         try:
-            info, tickers = await api.exchange_info(), await api.tickers()
-            symbols, ranked = universe(info.data, tickers.data, self.market)
+            info = await api.exchange_info()
+            tickers, gap = None, None
+            if self.market == "spot":
+                top_n = configured_top_n()
+                try:
+                    tickers = await api.tickers()
+                    symbols, ranked = universe(info.data, tickers.data, self.market)
+                    eligible = [r["symbol"] for r in tickers.data if r["symbol"] in symbols]
+                    if set(eligible) != symbols or len(eligible) != len(set(eligible)):
+                        raise Malformed("Incomplete or duplicate Spot ticker universe")
+                except (BinanceError, BudgetExceeded) as exc:
+                    LOG.exception("SPOT_MOVER_ROTATION_FALLBACK: fresh complete tickers unavailable")
+                    gap = {"type": type(exc).__name__, "reason": str(exc)}
+                    out["errors"].append(dict(gap, stage="mover_ranking"))
+                    out["status"] = "degraded"
+                    tickers = None
+                    ranked = rotation_rows(info.data)
+                    symbols = {r["symbol"] for r in ranked}
+            else:
+                tickers = await api.tickers()
+                symbols, ranked = universe(info.data, tickers.data, self.market)
             out["coverage"].update(coverage_state(old, symbols), ticker_symbols=len(ranked))
             out["state"]["universe"] = sorted(symbols)
             batch = sorted(ranked, key=lambda r: (seen.get(r["symbol"], ""), -r["priority"], r["symbol"]))
+            if self.market == "spot":
+                batch, out["mover_snapshot"] = selection_plan(
+                    ranked, seen, top_n=top_n, cycle_id=context.snapshot.get("cycle_id"),
+                    as_of=out["as_of"], provenance=tickers.provenance if tickers else None, gap=gap)
+                out["coverage"]["ticker_symbols"] = 0 if gap else len(ranked)
+                out["coverage"]["selections"] = []
             needed = 4 if self.market == "futures" else 2
             for row in batch:
                 if context.fetch_limit - context.used < needed or api.weight_used + 9 > api.weight_limit:
@@ -203,7 +229,7 @@ class MarketScannerAgent:
                     depth, bars = await api.depth(symbol), await api.klines(symbol, "1m")
                     stats = indicators(candles(bars.data, datetime.now(timezone.utc).timestamp()))
                     book = liquidity(depth.data)
-                    sources = [info.provenance, tickers.provenance, depth.provenance, bars.provenance]
+                    sources = [info.provenance] + ([tickers.provenance] if tickers else []) + [depth.provenance, bars.provenance]
                     derivatives = {"status": "not_applicable", "reason": "Spot has no funding or open interest"}
                     if self.market == "futures":
                         oi, premium = await api.open_interest(symbol), await api.premium_index(symbol)
@@ -214,19 +240,26 @@ class MarketScannerAgent:
                                        "last_funding_rate": number(premium.data["lastFundingRate"]),
                                        "open_interest_time": oi.data.get("time"), "premium_time": premium.data.get("time")}
                         sources += [oi.provenance, premium.provenance]
-                    score = row["volume_percentile"] * stats["atr_pct"] / (1 + book["spread_bps"])
+                    score = (row["volume_percentile"] * stats["atr_pct"] / (1 + book["spread_bps"])
+                             if row["volume_percentile"] is not None else None)
                     candidate = dict(row, indicators=stats, liquidity=book, derivatives=derivatives,
                                      score=score, as_of=bars.provenance["fetched_at"], provenance=sources)
                     candidate["reasons"] = [f"24h quote volume {row['quote_volume_24h']} {row['quote_asset']}; quote-group n={row['quote_group_n']}",
                                             f"ATR% {stats['atr_pct']} (n={stats['n']})",
                                             f"Snapshot spread {book['spread_bps']} bps",
                                             "Suitability only; quote-volume percentile within quote group, not expected profit"]
+                    if gap:
+                        candidate["reasons"] = ["Ticker data gap: quote volume, change and suitability score unavailable"]
+                    if self.market == "spot":
+                        out["coverage"]["selections"].append({"symbol": symbol, **row["selection"]})
                     out["candidates"].append(candidate)
                     seen[symbol] = bars.provenance["fetched_at"]
                     out["coverage"]["scanned_symbols"].append(symbol)
                 except (BinanceError, BudgetExceeded, KeyError, TypeError) as exc:
                     LOG.exception("SCANNER_SYMBOL_FAILED market=%s symbol=%s", self.market, symbol)
                     error = {"symbol": symbol, "type": type(exc).__name__, "reason": str(exc)}
+                    if self.market == "spot":
+                        error["selection"] = row["selection"]
                     out["errors"].append(error)
                     out["status"] = "degraded"
                     if isinstance(exc, GeoBlocked):
@@ -236,7 +269,12 @@ class MarketScannerAgent:
         except (BinanceError, BudgetExceeded) as exc:
             LOG.exception("SCANNER_UNAVAILABLE market=%s", self.market)
             out.update(status="failed", candidates=[], error={"type": type(exc).__name__, "reason": str(exc)})
-        out["candidates"] = sorted(out["candidates"], key=lambda r: -r["score"])[:5]
+        out["candidates"] = sorted(out["candidates"], key=lambda r: -(r["score"] if r["score"] is not None else -1))[:5]
+        if self.market == "spot":
+            selections = out["coverage"].get("selections", [])
+            out["coverage"].update(
+                mover_priority_scanned=sum(s["basis"] != "rotation" for s in selections),
+                rotation_scanned=sum(s["basis"] == "rotation" for s in selections))
         covered = out["coverage"]["scanned_symbols"]
         age = max((max(0, (datetime.now(timezone.utc) - datetime.fromisoformat(at)).total_seconds())
                    for at in seen.values()), default=None)
