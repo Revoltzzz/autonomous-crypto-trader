@@ -23,7 +23,7 @@ def capture_results(report):
     account = report.get("portfolio_account", report.get("paper_account")) or {}
     report["equity_snapshot"] = {
         "timestamp": report.get("finished_at"),
-        "scope": "all_markets_v1" if "portfolio_account" in report else "solana",
+        **({"scope": "all_markets_v1"} if "portfolio_account" in report else {}),
         "equity": account.get("equity"), "cash": account.get("cash"),
         "open_positions_count": len(report["paper_positions"]) if "equity" in account else None,
         "valuation_status": report.get("valuation_status", "unavailable"),
