@@ -212,6 +212,12 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
                 report["status"] = "failed"
                 report["binance_paper_error"] = str(exc)
                 log.exception("BINANCE_PAPER_PIPELINE_FAILED; no substitute state")
+        from act.research.runtime import capture_news_evidence
+        try:
+            report["research_news"] = capture_news_evidence(report)
+        except Exception as exc:
+            log.exception("RESEARCH_NEWS_FAILED; no substitute evidence")
+            report["research_news"] = {"status": "failed", "error": str(exc)}
         report["news_brief"] = news_brief(report["agents"])
         try:
             report["telegram"] = await push_brief(report["news_brief"])
@@ -246,3 +252,4 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
 if __name__ == "__main__":
     setup_logging()
     asyncio.run(run_cycle())
+    
