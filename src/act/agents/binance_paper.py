@@ -571,9 +571,9 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
     solana = deepcopy(report.get("paper_account") or {})
     report["market_accounts"] = {"solana": solana, **{m: accounts[m] for m in MARKETS}}
     if solana.get("equity") is not None and accounts["total"]["equity"] is not None:
-        report["paper_account"] = {**solana, **{k: solana[k] + accounts["total"][k] for k in ("equity", "cash")}}
+        report["portfolio_account"] = {k: solana[k] + accounts["total"][k] for k in ("equity", "cash")}
     else:
-        report["paper_account"] = {"error": "Missing current market valuation; total unavailable"}
+        report["portfolio_account"] = {"error": "Missing current market valuation; total unavailable"}
         report["valuation_status"] = "unavailable"
     if state["halt"] or state["daily_halt"] == now[:10]:
         report["status"] = "degraded"
@@ -611,7 +611,7 @@ def paper_panel(report):
                       if p.get("mark") is not None else None)
         view = {k: p.get(k) for k in ("market", "symbol", "size", "entry_price", "mark", "mark_at", "take_profit", "stop_loss")}
         out += '<article><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + safe({**view, "unrealized_pnl": unrealized}) + '</pre></article>'
-    out += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + safe({"accounts": report.get("market_accounts"), "risk": data.get("risk"), "closed_trades_n": data.get("closed_trades_n")}) + '</pre></section>'
+    out += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + safe({"accounts": report.get("market_accounts"), "portfolio_total": report.get("portfolio_account"), "risk": data.get("risk"), "closed_trades_n": data.get("closed_trades_n")}) + '</pre></section>'
     return out
 
 def validate_event(event):
