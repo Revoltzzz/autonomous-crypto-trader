@@ -90,7 +90,7 @@ Tests in test_research_policy.py cover the primitives only; CI is the validator.
 No shell/Python runs are claimed. No risk, scanner/TA, fill model, exchange,
 Render/billing or HFTENGINE changes. No external code copied.
 
-# Build 4 â partial research foundations
+# Build 4 — partial research foundations
 
 PAPER ONLY. Zero promotions. This is NOT the full Build 4 agent upgrade. Existing paper selection, fills, risk limits and champions remain unchanged. No keys, accounts, signed endpoints, live orders, paid services, Render or billing changes.
 
