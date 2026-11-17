@@ -12,13 +12,19 @@ from types import MappingProxyType
 from typing import Protocol
 from urllib.parse import urlsplit
 
+
 import httpx
+
 
 LOG = logging.getLogger(__name__)
 
 
+
+
 def utcnow():
     return datetime.now(timezone.utc).isoformat()
+
+
 
 
 def freeze(value):
@@ -29,16 +35,22 @@ def freeze(value):
     return value
 
 
+
+
 class Agent(Protocol):
     name: str
+
 
     def describe(self) -> str: ...
     async def run(self, context) -> dict: ...
 
 
+
+
 class Registry:
     def __init__(self):
         self._agents = {}
+
 
     def register(self, agent: Agent):
         if not agent.name or not agent.name.replace('_', '').isalnum():
@@ -48,12 +60,17 @@ class Registry:
         self._agents[agent.name] = agent
         return agent
 
+
     def all(self):
         return tuple(self._agents.values())
 
 
+
+
 class BudgetExceeded(RuntimeError):
     pass
+
+
 
 
 def budget(name, kind, default):
@@ -66,6 +83,8 @@ def budget(name, kind, default):
     return min(value, 60 if kind == 'TIME_BUDGET_SECONDS' else 20)
 
 
+
+
 @dataclass
 class Context:
     snapshot: object
@@ -76,9 +95,11 @@ class Context:
     used: int = 0
     _started: float = field(default_factory=monotonic)
 
+
     @property
     def remaining(self):
         return max(0, self.seconds - (monotonic() - self._started))
+
 
     async def fetch(self, url):
         parsed = urlsplit(url)
@@ -91,7 +112,7 @@ class Context:
         self.provenance.append(source)
         try:
             response = await asyncio.wait_for(
-                self._client.get(url, timeout=min(4, self.remaining), follow_redirects=False),
+                self._client.get(url, timeout=min(4, self.remaining), follow_redirects=True),
                 timeout=self.remaining)
             source['fetched_at'] = utcnow()
             source['http_status'] = response.status_code
@@ -103,6 +124,8 @@ class Context:
         except (Exception, asyncio.CancelledError):
             source['status'] = 'failed'
             raise
+
+
 
 
 async def run_agents(report, *, client=None, registry=None):
