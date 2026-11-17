@@ -1,3 +1,67 @@
+## Build 4 part 4: PARTIAL dispatch prerequisites — NOT activated
+
+PAPER ONLY. Priority 1 is **not complete**. research/dispatch_safety.py records
+resolution-time observations from the actual StrategySettings, RiskSettings,
+SecuritySettings, DiscoverySettings, PositionSettings and VolumeProfileSettings
+classes, both existing risk-limit dataclasses and Binance fee_rate functions.
+Every field of those six models includes its effective value, schema bounds and
+environment-variable/default source. Solana costs come from the supplied resolved
+Settings instance; no persistence credentials or arbitrary environment dump is stored.
+Implementation source fingerprints detect code changes but are NOT semantic rule
+capture or proof of equivalence. Hardcoded entry/exit/TA/fill constants and
+instrument-specific exchange minimums are not yet fully modeled. Environment
+observations are resolved when called, not frozen through the production cycle.
+
+### Evidence and activation boundary
+
+Offline tests include 20 Solana effective-StrategySettings roundtrip cases covering
+BUY, REJECT, preflight WATCH and selected threshold boundaries. Full decision
+objects are compared as canonical JSON bytes: IDs/time are pinned in fixtures,
+not stripped; floats are not rounded. A mismatch raises
+DECISION_BYTE_DIVERGENCE with case name and both hashes. This is **the same
+production evaluator with implicit vs captured config**, not an independent
+policy-dispatched path. It does not prove all vetoes, exits, sizing gates, Spot or
+Futures equivalence. Comparator tests are not strategy evidence. Small-n fixture
+coverage is descriptive, not profitability or exhaustive behavior evidence.
+
+Runtime dispatch is **OFF and unwired**. All existing hardcoded v1 paths remain
+unchanged; Futures remains blocked_http_451. The reserved ACT_POLICY_DISPATCH
+flag defaults false in the prerequisite guard. false returns hardcoded_v1;
+true raises DISPATCH_BLOCKED, and other values are invalid. **It is not yet a
+production kill switch**: setting it cannot activate dispatch or change the cycle.
+No CI result or caller-supplied observation can bypass the missing implementation.
+
+### Append-only observation upgrade, not full snapshot migration
+
+migrate_observation(state, effective_observation(settings), at) is a pure,
+explicit transform. Validate the existing checkpoint first; append one
+content-addressed child observation per market; keep every legacy event and
+champion pointer byte-for-byte. An unchanged observation is idempotent. Changed
+observations append new children without rewriting old versions. The returned
+checkpoint can be persisted in research_registry using the existing cycle store;
+no new database schema or remote write interface is added. Offline tests cover
+local persistence roundtrip, corrupt indices/pointers, tampering and drift.
+**The running checkpoint hook does not call this helper.** No deployed or stored
+checkpoint has been migrated by this change. Legacy champions stay identity-only
+and the full resolver continues to reject them loudly. Observation schema
+act.effective-observation.v1 is deliberately distinct from act.policy.v1;
+partial observations must never masquerade as complete snapshots.
+
+### Required follow-up and retained limits
+
+Before activating anything: finish named complete effective rule capture with a
+single shared resolution path; capture instrument minimums as actual runtime
+inputs; build a policy-backed evaluator and full all-market accept/reject/veto,
+boundary, sizing and exit decision-byte corpus; implement append-only full
+snapshot attachments preserving v1 champions; wire persisted-pointer resolution,
+market-halting drift failures and a real kill switch only after CI proves parity.
+Proof remains fixture-bounded, never exhaustive. Shadows, attribution/scoreboard,
+executable approximate backtester, one-shot OOS and promotion remain deferred.
+No risk limits, scanner/TA algorithms, fill models, live execution, exchange
+accounts/keys/signed endpoints, geo-block work, Render or billing changes.
+HFTENGINE was not accessed or modified and no external code was copied.
+CI (ruff + pytest) validates this increment; no local shell/Python runs claimed.
+
 ## Build 4 part 3: partial policy primitives (not activated)
 
 PAPER ONLY. This increment adds research/policy.py: canonical immutable policy
