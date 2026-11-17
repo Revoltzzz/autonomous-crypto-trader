@@ -259,7 +259,7 @@ class RiskManagementAgent:
             raise ValueError("MAX_SIMULTANEOUS_POSITIONS")
         if candidate["id"] in state["used"]:
             raise ValueError("DUPLICATE_ORDER")
-        market, symbol = candidate["market"], candidate["symbol"]
+        market = candidate["market"]
         if market not in MARKETS or candidate.get("quote_asset", "USDT") != "USDT":
             raise ValueError("UNSUPPORTED_MARKET_OR_QUOTE")
         fresh({"fetched_at": candidate["as_of"]}, now, 1800 if filling else 120)
@@ -383,6 +383,8 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
     state = restore(ledger)
     risk, executor = RiskManagementAgent(limits), TradeExecutionSimulationAgent()
     now = stamp()
+    for position in state["positions"].values():
+        position["mark"], position["mark_at"] = None, None
     decisions, evidence = [], []
     contexts, apis, infos, cache = {}, {}, {}, {}
     def record(action, reason, **details):
