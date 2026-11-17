@@ -746,3 +746,81 @@ Offline synthetic MockTransport tests in tests/test_binance_agents.py cover clie
 errors/weights/backoff/allowlist, rotation/coverage/geo handling, indicators,
 structure/heuristics, TA/challenges, state restore and escaped reporting.
 Browser-only development does NOT claim local pytest/ruff runs; PR CI validates.
+
+
+## Build 3: Binance PAPER execution and risk
+
+Nothing in this build places real orders. Only allowlisted public Binance GET
+market-data endpoints are used. No exchange account, API key, signing, credential
+or live executor exists. Solana strategy execution is unchanged. Binance events
+are appended to the same paper ledger, restored and persisted by the existing
+single-writer cycle; history is never rewritten. Do not run concurrent workers.
+
+Two new simulated compartments start with $10,000 each (Spot and USDT-M Futures).
+These are virtual capital, not deposits. market_accounts separates Solana, Spot,
+Futures and paper_account totals them. This capital discontinuity must not be
+interpreted as investment return. Existing historical Solana records are intact.
+All positions are unleveraged long simulations, not a promise of profitability.
+
+RiskManagementAgent has veto power: 0.5% equity risk per proposal, 4 concurrent
+positions/pending commitments, 50% gross exposure, 15% instrument exposure and
+2% daily-loss halt (UTC). These limits govern the combined Binance compartments;
+Solana retains its existing independent strategy limits. No loss-recovery sizing,
+forced activity or profit targets. Same-underlying Spot/Futures commitments are
+blocked. Absolute Pearson correlation >=0.8 is blocked; at least20 aligned
+one-minute returns are required and unknown correlation is vetoed. Pending orders
+reserve exposure and expire after1800seconds. Duplicate candle decisions are
+rejected. All five TA frames and agreement, fresh data and exchange filters are
+required. Critical exceptions cause a persisted emergency entry halt; risk-reducing
+exits remain allowed. There is deliberately no automatic emergency reset.
+
+TradeExecutionSimulationAgent queues decisions for a later cycle. A fill requires
+a completed1m candle whose OPEN is after decision+5seconds, never decision-time
+price. Model post-decision-1m-close + half-spread + top20-VWAP-impact-v1 adds the
+observed half-spread and walked-depth size impact to that candle close (subtracts
+for sales). It rejects insufficient depth, stale observations and anchor/book
+separation over2%. Book fetch age<=15seconds, candle fetch age<=120seconds and
+latest completed candle age<=120seconds are required. The model is an estimate,
+not a historical replay or a guarantee of executable prices. Provenance and model
+are stored for each fill. Real LOT_SIZE/MARKET_LOT_SIZE and MIN_NOTIONAL/NOTIONAL
+from exchangeInfo are enforced with decimal downward quantity rounding.
+
+Named fee constants (decimal fractions): SPOT_MAKER_RATE=0.001,
+SPOT_TAKER_RATE=0.001, FUTURES_MAKER_RATE=0.0002,
+FUTURES_TAKER_RATE=0.0005. All simulated executions are taker fills; no BNB/VIP
+rebates. Override via BINANCE_SPOT_MAKER_RATE, BINANCE_SPOT_TAKER_RATE,
+BINANCE_FUTURES_MAKER_RATE, BINANCE_FUTURES_TAKER_RATE (range0..0.01).
+Spot source: https://www.binance.com/en/fee/trading (regular0.100%/0.100%).
+Futures reference: https://www.binance.com/en/fee/futureFee . The browser returned
+no fee rows on17Nov2026: futures0.020%/0.050% are conservative configured
+assumptions pending verification, not a verified current account fee quote.
+Funding source: https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History .
+Recorded fundingTime, fundingRate and markPrice are applied only while a position
+is open, including negative-rate credits; checkpoints prevent duplicate accrual.
+Missing historical coverage blocks management loudly rather than inventing rates.
+
+ATR and market support/resistance determine initial stop and target; trailing
+stops, half profit booking and TA-invalidated exits queue delayed market sales.
+Both entry/exit fees and funding are allocated into realized P&L. No mark fallback
+is invented: missing marks make equity unavailable and halt unsafe entries.
+A scheduled/free-host cycle is NOT continuous tick monitoring; TP/SL are simulated
+at observed cycles and may gap. No claim of exchange-native stop protection.
+
+/status includes binance_paper risk/decisions/positions, binance_learning records,
+and market_accounts. HUD includes escaped/wrapped PAPER positions, marks, TP/SL,
+unrealized P&L and risk caps/halts/vetoes. Small samples always carry n.
+Binance closed tranches currently join existing paper_trades/readiness inputs;
+partial exits must not be mistaken for independent strategy samples. Results are
+paper observations, never evidence that a live system is ready.
+
+### News source maintenance
+CoinDesk canonical RSS is https://www.coindesk.com/arc/outboundfeeds/rss (no
+trailing slash). Fetches follow redirects; HTTP status is retained in errors.
+Coinbase blog was removed because its URL returns HTML and no official working
+RSS feed was verified. It can return if Coinbase publishes a verified feed.
+
+Offline fixtures in tests/test_binance_paper.py cover model fills/latency/depth,
+fees/funding/minimums, risk vetoes/caps/correlation, accounting, shared ledger,
+pipeline queuing and escaped reporting. Browser development does not claim local
+pytest or ruff execution; GitHub CI is the validator. See
+[design-only live boundary](docs/LIVE_TRADING_DESIGN.md); nothing there is active.
