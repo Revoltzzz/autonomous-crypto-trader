@@ -40,6 +40,9 @@ def selection_plan(rows, seen, *, top_n, cycle_id, as_of, provenance=None, gap=N
     The existing scanner alone owns admission against fetch/weight budgets.
     """
     rows = deepcopy(rows)
+    for row in rows:
+        if row.get("change_pct_24h") is not None and row["change_pct_24h"] < 0:
+            row["research_label"] = LOSER_LABEL
     rotation = sorted(rows, key=lambda r: (seen.get(r["symbol"], ""), -r["priority"], r["symbol"]))
     gainers = sorted((r for r in rows if not gap and r["change_pct_24h"] > 0),
                      key=lambda r: (-r["change_pct_24h"], r["symbol"]))
