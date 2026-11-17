@@ -116,10 +116,10 @@ class BinanceData:
                       "weight_used": self.weight_used}
             self.context.provenance.append(source)
             try:
-                self.header_weight = max(self.header_weight, int(
-                    response.headers.get("x-mbx-used-weight-1m", "0")))
-                if self.header_weight < 0:
+                observed_weight = int(response.headers.get("x-mbx-used-weight-1m", "0"))
+                if observed_weight < 0:
                     raise ValueError
+                self.header_weight = max(self.header_weight, observed_weight)
             except ValueError:
                 raise Malformed("Invalid Binance weight header") from None
             source["observed_weight_1m"] = self.header_weight
