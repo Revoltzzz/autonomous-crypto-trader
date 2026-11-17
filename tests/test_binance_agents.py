@@ -375,3 +375,15 @@ def test_override_geoblock_provenance(monkeypatch, status):
         assert ctx.provenance[0]["base_url"] == "https://data-api.binance.vision"
         assert ctx.provenance[0]["http_status"] == status
     asyncio.run(with_context(run, lambda r: httpx.Response(status)))
+
+
+def test_override_network_failure_provenance(monkeypatch):
+    monkeypatch.setenv("BINANCE_SPOT_BASE_URL", "https://data-api.binance.vision")
+    def fail(request):
+        raise httpx.ConnectError("offline fixture", request=request)
+    async def run(ctx):
+        with pytest.raises(NetworkError):
+            await BinanceData(ctx, "spot").exchange_info()
+        assert ctx.provenance[0]["base_url"] == "https://data-api.binance.vision"
+        assert ctx.provenance[0]["status"] == "failed"
+    asyncio.run(with_context(run, fail))
