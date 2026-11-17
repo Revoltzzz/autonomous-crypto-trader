@@ -563,7 +563,7 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
         views.append({**deepcopy(p), "token": p["symbol"], "current_price": p.get("mark"),
             "unrealized_pnl": ((p["mark"] - p["entry_price"]) * p["size"] - p["fees_paid"] - p["funding_paid"])
                 if p.get("mark") is not None else None,
-            "stop_loss": p["stop"], "take_profit": p["target"],
+            "stop_loss": p["stop_loss"], "take_profit": p["take_profit"],
             "stale_quoted": p.get("mark") is None,
             "quote": {"fetched_at": p.get("mark_at"), "model": MODEL}})
     report.setdefault("paper_positions", []).extend(views)
