@@ -163,13 +163,17 @@ class Context:
         source = {'source_url': url, 'fetched_at': utcnow(), 'status': 'pending'}
         self.provenance.append(source)
         try:
-            response = await asyncio.wait_for(
-                self._client.get(url, timeout=min(4, self.remaining), follow_redirects=True),
-                timeout=self.remaining)
+            limit = spot_response_limit(url)
+            if limit is None:
+                request = self._client.get(url, timeout=min(4, self.remaining), follow_redirects=True)
+            else:
+                request = read_spot_response(
+                    self._client, url, min(4, self.remaining), limit, source)
+            response = await asyncio.wait_for(request, timeout=self.remaining)
             source['fetched_at'] = utcnow()
             source['http_status'] = response.status_code
             response.raise_for_status()
-            if len(response.content) > 2_000_000:
+            if limit is None and len(response.content) > 2_000_000:
                 raise ValueError('Feed exceeds 2MB limit')
             source['status'] = 'success'
             return response
@@ -183,6 +187,55 @@ class Context:
 
 
 
+
+
+def spot_response_limit(url):
+    """Only exact public Spot bulk URLs get a larger decoded-byte budget."""
+    parsed = urlsplit(url)
+    if parsed.netloc not in ('api.binance.com', 'data-api.binance.vision') or parsed.scheme != 'https':
+        return None
+    limits = {
+        '/api/v3/exchangeInfo': ('BINANCE_SPOT_EXCHANGE_INFO_MAX_BYTES', 24_000_000),
+        '/api/v3/ticker/24hr': ('BINANCE_SPOT_TICKER_MAX_BYTES', 4_000_000),
+    }
+    if parsed.path not in limits or parsed.query or parsed.fragment:
+        return None
+    key, default = limits[parsed.path]
+    try:
+        value = int(os.environ.get(key, str(default)))
+    except ValueError:
+        raise ValueError(f'Invalid {key}: integer bytes required') from None
+    if not 1 <= value <= 32_000_000:
+        raise ValueError(f'Invalid {key}: must be between 1 and 32000000 bytes')
+    return value
+
+
+async def read_spot_response(client, url, timeout, limit, source):
+    """Bound retained decoded body before JSON parsing; no redirect cap escape."""
+    async with client.stream('GET', url, timeout=timeout, follow_redirects=True) as response:
+        source['fetched_at'] = utcnow()
+        source['http_status'] = response.status_code
+        response.raise_for_status()
+        if spot_response_limit(str(response.url)) is None:
+            limit = 2_000_000
+        source['response_limit_bytes'] = limit
+        reported = response.headers.get('content-length')
+        source['reported_size_bytes'] = reported
+        if reported is not None and reported.isdecimal() and int(reported) > limit:
+            raise ValueError(f'Response exceeds {limit} byte limit: reported {reported} bytes')
+        body = bytearray()
+        async for chunk in response.aiter_bytes(chunk_size=65_536):
+            actual = len(body) + len(chunk)
+            source['decoded_size_bytes'] = actual
+            if actual > limit:
+                raise ValueError(f'Response exceeds {limit} byte limit: decoded at least {actual} bytes'
+                                 f' (reported {reported})')
+            body.extend(chunk)
+        # Body is already decoded. Avoid a second content-encoding decode.
+        headers = {k: v for k, v in response.headers.items()
+                   if k.lower() not in ('content-encoding', 'content-length')}
+        return httpx.Response(response.status_code, headers=headers, content=bytes(body),
+                              request=response.request)
 
 async def run_agents(report, *, client=None, registry=None):
     if registry is None:
@@ -220,3 +273,4 @@ async def run_agents(report, *, client=None, registry=None):
                           fetches_used=context.used if context else 0)
             results[agent.name] = result
     return results
+    
