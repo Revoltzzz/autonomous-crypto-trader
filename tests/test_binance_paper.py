@@ -232,3 +232,45 @@ def test_paper_guard_and_escaped_mobile_panel(tmp_path):
     panel = bp.paper_panel({"binance_paper": {"as_of": "<script>", "positions": [], "risk": {"halt": "<img>"}, "closed_trades_n": 0}})
     assert "<script>" not in panel and "&lt;script&gt;" in panel
     assert "overflow-wrap:anywhere" in panel and "LAST STORED STATE" in panel
+
+
+def test_completed_positions_does_not_inflate_partial_samples():
+    s = bp.initial_state()
+    ex = bp.TradeExecutionSimulationAgent()
+    p = ex.open(s, approved(s), 100, {"anchor": 100}, NOW)
+    ex.close(s, p, p["size"]/2, 110, {"anchor": 110}, NOW, "partial_profit")
+    assert bp.completed_positions(s) == []
+    ex.close(s, p, p["size"], 105, {"anchor": 105}, "2026-11-17T12:03:00+00:00", "stop")
+    rows = bp.completed_positions(s)
+    assert len(rows) == 1 and rows[0]["tranches_n"] == 2
+    assert rows[0]["realized_pnl"] == pytest.approx(sum(t["realized_pnl"] for t in s["trades"]))
+
+
+def test_pipeline_pending_fill_uses_post_decision_data(monkeypatch, tmp_path):
+    monkeypatch.setattr(bp, "stamp", lambda: NOW)
+    async def info(self):
+        return response({"symbols": [metadata()]})
+    async def kline(self, symbol, interval):
+        value = bars()
+        for i, row in enumerate(value.data):
+            close = 94 + (i+1)*.1
+            row[1:5] = [str(close-.05), str(close+.1), str(close-.1), str(close)]
+        return value
+    async def depth(self, symbol):
+        return response({"bids": [["99.9", "1000"]], "asks": [["100.1", "1000"]]})
+    monkeypatch.setattr(bp.BinanceData, "exchange_info", info)
+    monkeypatch.setattr(bp.BinanceData, "klines", kline)
+    monkeypatch.setattr(bp.BinanceData, "depth", depth)
+    ledger = PaperLedger(tmp_path / "pipeline.json")
+    s = bp.initial_state()
+    s["pending"].append(approved(s))
+    ledger._append({"kind": "binance_paper", "at": DECISION, "cycle_id": "seed", "state": s})
+    report = {"paper_only": True, "cycle_id": "fill", "paper_account": {"equity": 10000, "cash": 10000}}
+    result = asyncio.run(bp.run_pipeline(report, ledger))
+    assert result["halt"] is None
+    assert len(result["positions"]) == 1, report["binance_paper"]["decisions"]
+    p = next(iter(result["positions"].values()))
+    assert p["execution"]["bar_open_ms"] > bp.ms(DECISION)
+    assert p["entry_price"] == pytest.approx(100.1)
+    assert report["paper_positions"][0]["stop_loss"] < p["entry_price"]
+    assert report["paper_positions"][0]["current_price"] is not None
