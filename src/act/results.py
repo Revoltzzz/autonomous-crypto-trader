@@ -4,20 +4,26 @@ import math
 from datetime import datetime
 from html import escape
 
+
 from act.learning import learning_panel
 from act.risk.limits import RiskLimits, RiskSettings
 from act.security import ConcentrationSettings
 from act.strategy import StrategySettings
 
 
+
+
 LIMIT = 30
+
+
 
 
 def capture_results(report):
     """Presentation metadata in existing cycle JSON, saved by the existing atomic RPC."""
-    account = report.get("paper_account") or {}
+    account = report.get("portfolio_account", report.get("paper_account")) or {}
     report["equity_snapshot"] = {
         "timestamp": report.get("finished_at"),
+        **({"scope": "all_markets_v1"} if "portfolio_account" in report else {}),
         "equity": account.get("equity"), "cash": account.get("cash"),
         "open_positions_count": len(report["paper_positions"]) if "equity" in account else None,
         "valuation_status": report.get("valuation_status", "unavailable"),
@@ -29,6 +35,8 @@ def capture_results(report):
         **{k.upper(): v for k, v in vars(RiskLimits()).items()},
         **{"RISK_" + k.upper(): v for k, v in RiskSettings().model_dump().items()},
     }
+
+
 
 
 def load_reports(store):
@@ -43,14 +51,20 @@ def load_reports(store):
     return [json.loads(p.read_text()) for p in paths[:LIMIT]]
 
 
+
+
 def text(value):
     if value is None:
         return "Unavailable"
     return escape(str(value))
 
 
+
+
 def raw(value):
     return '<pre>' + text(json.dumps(value, indent=2, allow_nan=False)) + '</pre>'
+
+
 
 
 def table(rows, columns, empty):
@@ -60,6 +74,8 @@ def table(rows, columns, empty):
     return ('<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>'
             + (body or '<tr><td colspan="' + str(len(columns)) + '">' + text(empty) + '</td></tr>')
             + '</tbody></table></div>')
+
+
 
 
 def equity_chart(reports):
@@ -102,6 +118,8 @@ def equity_chart(reports):
             'One observation is a point, not an invented line. Sleep creates observation gaps.</p>')
 
 
+
+
 def decision_panel(reports):
     items = [(r, d) for r in reports for d in reversed(r.get("decisions", []))][:200]
     output = ['<section id="decision-log"><h2>Decision log</h2><p>Latest 200 candidates across '
@@ -122,10 +140,14 @@ def decision_panel(reports):
     return ''.join(output) + '</section>'
 
 
+
+
 def trend_rows(reports):
     return [{"timestamp": r.get("finished_at"), "status": r.get("status"),
              "discovery": r.get("discovery_stats"), "rejections": r.get("rejection_breakdown"),
              "security": r.get("security_source_stats")} for r in reversed(reports)]
+
+
 
 
 def trend_panel(reports):
@@ -150,6 +172,8 @@ def trend_panel(reports):
         output.append("<details><summary>All rejection labels and combinations</summary>"
                       + raw(row["rejections"]) + "</details>")
     return ''.join(output) + '</section>'
+
+
 
 
 def results_panels(latest, reports, error=None):

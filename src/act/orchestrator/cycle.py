@@ -5,6 +5,7 @@ from time import perf_counter
 from datetime import datetime, timezone
 from uuid import uuid4
 
+
 from act.collectors.coingecko import CoinGeckoCollector
 from act.collectors.geckoterminal import GeckoTerminalCollector as GeckoTerminalCollector
 from act.collectors.rugcheck import RugCheckCollector
@@ -25,8 +26,12 @@ from act.agents.news import news_brief
 from act.agents.telegram import push_brief
 
 
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
 
 
 async def run_cycle(settings=None, client=None, persistence=None) -> dict:
@@ -45,9 +50,11 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     path = settings.report_dir / (report["cycle_id"] + ".json")
     report["report_path"] = str(path)
 
+
     def step(name):
         report["steps"].append({"step": name, "at": now()})
         log.info("Cycle %s: %s", report["cycle_id"], name)
+
 
     failure = None
     store = None
@@ -195,6 +202,16 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
             log.exception("AGENT_HOOK_FAILED; trading cycle remains isolated")
             report["agents"] = {"news": {"status": "failed", "provenance": [],
                                           "error": {"type": type(exc).__name__}}}
+        if ledger is not None:
+            from act.agents.binance_paper import run_pipeline
+            try:
+                await run_pipeline(report, ledger, client=client)
+                snapshot = ledger_snapshot(ledger, report.get("paper_account") or {})
+            except Exception as exc:
+                failure = failure or exc
+                report["status"] = "failed"
+                report["binance_paper_error"] = str(exc)
+                log.exception("BINANCE_PAPER_PIPELINE_FAILED; no substitute state")
         report["news_brief"] = news_brief(report["agents"])
         try:
             report["telegram"] = await push_brief(report["news_brief"])
@@ -222,6 +239,8 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
     if failure is not None:
         raise RuntimeError(f"Cycle failed: {failure}; report: {path}") from failure
     return report
+
+
 
 
 if __name__ == "__main__":

@@ -6,17 +6,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+
 from act.domain.models import AccountState, PaperPosition, PaperTrade, TradeProposal
+
+
 
 
 def utcnow():
     return datetime.now(timezone.utc)
 
 
+
+
 def positive(value):
     if not math.isfinite(value) or value <= 0:
         raise ValueError("Expected a positive finite price or balance")
     return value
+
+
 
 
 class PaperLedger:
@@ -44,13 +51,18 @@ class PaperLedger:
                 PaperPosition.model_validate(event["position"])
             elif event["kind"] == "close":
                 PaperTrade.model_validate(event["trade"])
+            elif event["kind"] == "binance_paper":
+                from act.agents.binance_paper import validate_event
+                validate_event(event)
             elif event["kind"] not in ("mark", "position_quotes"):
                 raise ValueError("Unknown ledger event")
         self.positions
 
+
     @property
     def history(self):
         return json.loads(json.dumps(self._events))
+
 
     @property
     def positions(self):
@@ -65,18 +77,22 @@ class PaperLedger:
                 del positions[event["trade"]["id"]]
         return positions
 
+
     @property
     def closed_trades(self):
         return [PaperTrade.model_validate(e["trade"]) for e in self._events if e["kind"] == "close"]
+
 
     @property
     def realized_pnl(self):
         return sum(t.realized_pnl for t in self.closed_trades)
 
+
     @property
     def cash(self):
         return self.initial_cash + self.realized_pnl - sum(
             p.entry_price * p.size + p.fees_paid for p in self.positions.values())
+
 
     def _append(self, event):
         current = self.path.read_text() if self.path.exists() else None
@@ -100,10 +116,12 @@ class PaperLedger:
             temporary.unlink(missing_ok=True)
         self._events, self._disk = events, text
 
+
     def record_position_quotes(self, observations, at):
         """Append this cycle's fresh/null marks, never change prior observations."""
         self._append({"kind": "position_quotes", "at": at.isoformat(),
                       "positions": observations})
+
 
     def open(self, proposal: TradeProposal) -> PaperPosition:
         if proposal.leverage != 1 or proposal.stop_loss is None:
@@ -123,6 +141,7 @@ class PaperLedger:
                       "position": position.model_dump(mode="json")})
         return position
 
+
     def close(self, position_id: str, market_price: float, reason: str) -> PaperTrade:
         if not reason.strip():
             raise ValueError("An exit reason is required")
@@ -138,9 +157,11 @@ class PaperLedger:
                       "trade": trade.model_dump(mode="json")})
         return trade
 
+
     def unrealized_pnl(self, prices: dict[str, float]) -> float:
         return sum((positive(prices[p.token]) * (1 - self.slippage) * (1 - self.fee)
                     - p.entry_price) * p.size - p.fees_paid for p in self.positions.values())
+
 
     def account_state(self, prices: dict[str, float]) -> AccountState:
         now = utcnow()
