@@ -17,7 +17,7 @@ from pathlib import Path
 from time import perf_counter
 
 from act import api
-from act.hud import CSS, hero, restyle
+from act.hud import CSS, MOTION_CSS, MOTION_SCRIPT, hero, restyle, static_restyle
 
 
 def stored_cycle():
@@ -74,7 +74,7 @@ def test_identical_stored_input_renderer_profile(monkeypatch, capsys):
     monkeypatch.setattr(api, 'LATEST', report)
     monkeypatch.setattr(api, 'RECENT', [report])
     monkeypatch.setattr(api, 'HISTORY_ERROR', None)
-    renderers = {'pre_hud': lambda page, *args: page, 'hud': restyle}
+    renderers = {'pre_hud': lambda page, *args: page, 'before_motion': static_restyle, 'hud': restyle}
     samples = {name: [] for name in renderers}
     pages = {}
     # Warm each path, then alternate order to avoid systematic warm-cache bias.
@@ -107,3 +107,48 @@ def test_identical_stored_input_renderer_profile(monkeypatch, capsys):
         print('\nHUD_IDENTICAL_INPUT_PROFILE ' + json.dumps(summary, sort_keys=True))
     assert samples['pre_hud'] and samples['hud']
     assert len(pages['hud']) > len(pages['pre_hud'])
+
+
+def test_motion_budget_identical_stored_input(monkeypatch):
+    report = stored_cycle()
+    monkeypatch.setattr(api, 'LATEST', report)
+    monkeypatch.setattr(api, 'RECENT', [report])
+    monkeypatch.setattr(api, 'HISTORY_ERROR', None)
+    # Hold the approved tabbed layout identical; isolate animation-layer overhead.
+    renderers = {'before': lambda *args: restyle(*args, animations=False), 'after': restyle}
+    samples = {name: [] for name in renderers}
+    for renderer in renderers.values():
+        monkeypatch.setattr(api, 'restyle', renderer)
+        api.dashboard()
+    for iteration in range(21):
+        order = list(renderers) if iteration % 2 else list(reversed(renderers))
+        for name in order:
+            monkeypatch.setattr(api, 'restyle', renderers[name])
+            start = perf_counter()
+            api.dashboard()
+            samples[name].append((perf_counter() - start) * 1000)
+    before, after = (statistics.median(samples[name]) for name in ('before', 'after'))
+    print(f'HUD_MOTION_BUDGET before_ms={before:.3f} after_ms={after:.3f} delta_ms={after-before:.3f}')
+    assert after - before <= 2.0
+
+
+def test_tabs_motion_and_full_news_preserved(monkeypatch):
+    from act.agents.news import news_panel
+
+    report = stored_cycle()
+    monkeypatch.setattr(api, 'LATEST', report)
+    monkeypatch.setattr(api, 'RECENT', [report])
+    monkeypatch.setattr(api, 'HISTORY_ERROR', None)
+    page = api.dashboard()
+    assert '<div id="overview-panel">' in page
+    assert '<div id="news-panel" hidden>' in page
+    assert page.count(news_panel(report)) == 1
+    assert 'aria-expanded="true">OVERVIEW' in page
+    assert 'LAST STORED STATE · as of ' in page
+    assert 'prefers-reduced-motion:no-preference' in MOTION_CSS
+    assert 'animation:none!important;transition:none!important' in MOTION_CSS
+    assert "if (motion.matches) return" in MOTION_SCRIPT
+    assert 'stroke-dashoffset' not in MOTION_CSS
+    assert '.mode' not in MOTION_CSS
+    assert 'main{overflow-wrap:anywhere}' in page
+    assert 'line-clamp' not in page and 'text-overflow:ellipsis' not in page
