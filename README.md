@@ -809,8 +809,9 @@ at observed cycles and may gap. No claim of exchange-native stop protection.
 /status includes binance_paper risk/decisions/positions, binance_learning records,
 and market_accounts. HUD includes escaped/wrapped PAPER positions, marks, TP/SL,
 unrealized P&L and risk caps/halts/vetoes. Small samples always carry n.
-Binance closed tranches currently join existing paper_trades/readiness inputs;
-partial exits must not be mistaken for independent strategy samples. Results are
+Binance fully closed positions join existing paper_trades/readiness inputs once;
+partial tranches remain in the ledger and do not inflate independent sample n.
+The existing readiness snapshot adds per-market n and realized P&L breakdowns. Results are
 paper observations, never evidence that a live system is ready.
 
 ### News source maintenance
