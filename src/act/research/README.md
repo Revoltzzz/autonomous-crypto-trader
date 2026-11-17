@@ -1,3 +1,31 @@
+## Build 4 part 3: partial policy primitives (not activated)
+
+PAPER ONLY. This increment adds research/policy.py: canonical immutable policy
+values with explicit selection, entry, exit and costs sections; registration via
+the append-only content-addressed registry; and a standalone persisted-champion
+resolver that rejects pointer mismatch, missing markets, legacy identity-only
+records, implementation mismatch and configuration drift. Exports are copies.
+
+These are caller-supplied snapshots, NOT verified complete production settings.
+Nonempty sections do not prove semantic completeness. The byte fixture proves
+canonical snapshot round trips only, NOT equivalence to current hardcoded v1
+strategy decisions. Runtime dispatch and checkpoint migration are NOT activated;
+legacy champions and all paper decisions remain unchanged. No historical trade
+is attributed, and no promotion or pointer-switch interface is added.
+
+Still deferred in priority order: capture all effective v1 selection/entry/exit
+settings and prove decision-byte equivalence before wiring runtime dispatch;
+bounded parameter/news challengers and same-data forward shadows; cumulative
+version attribution and escaped 375px-safe scoreboard; executable APPROXIMATE
+kline backtesting with next-candle timing, fees, minimums, gaps and honest
+insufficient_data/451 paths; durable one-shot OOS, evaluation journal and gated
+actuator. Phase 2 requires the challenger's own >=100 trades, >=8 weeks, positive
+net expectancy, PF>1.3, mark-to-market DD<10%, walk-forward consistency and
+completed backtest/forward-shadow evidence. Missing evidence never passes.
+Tests in test_research_policy.py cover the primitives only; CI is the validator.
+No shell/Python runs are claimed. No risk, scanner/TA, fill model, exchange,
+Render/billing or HFTENGINE changes. No external code copied.
+
 # Build 4 — partial research foundations
 
 PAPER ONLY. Zero promotions. This is NOT the full Build 4 agent upgrade. Existing paper selection, fills, risk limits and champions remain unchanged. No keys, accounts, signed endpoints, live orders, paid services, Render or billing changes.
