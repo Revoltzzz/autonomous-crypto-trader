@@ -558,8 +558,16 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
         "closed_trades_n": len(state["trades"]), "funding_events": evidence}
     report["binance_learning"] = {"n": len(decisions), "records": decisions,
                                    "caveat": "Observed paper decisions only; no inferred profits"}
-    report.setdefault("paper_positions", []).extend(deepcopy(list(state["positions"].values())))
-    report.setdefault("paper_trades", []).extend(deepcopy(state["trades"]))
+    views = []
+    for p in state["positions"].values():
+        views.append({**deepcopy(p), "token": p["symbol"], "current_price": p.get("mark"),
+            "unrealized_pnl": ((p["mark"] - p["entry_price"]) * p["size"] - p["fees_paid"] - p["funding_paid"])
+                if p.get("mark") is not None else None,
+            "stop_loss": p["stop"], "take_profit": p["target"],
+            "stale_quoted": p.get("mark") is None,
+            "quote": {"fetched_at": p.get("mark_at"), "model": MODEL}})
+    report.setdefault("paper_positions", []).extend(views)
+    report.setdefault("paper_trades", []).extend(completed_positions(state))
     solana = deepcopy(report.get("paper_account") or {})
     report["market_accounts"] = {"solana": solana, **{m: accounts[m] for m in MARKETS}}
     if solana.get("equity") is not None and accounts["total"]["equity"] is not None:
@@ -572,6 +580,23 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
     return state
 
 
+
+
+def completed_positions(state):
+    """One readiness observation per fully closed position, not per profit tranche."""
+    groups = {}
+    for trade in state["trades"]:
+        groups.setdefault(trade["position_id"], []).append(trade)
+    result = []
+    for identity, rows in groups.items():
+        if identity in state["positions"]:
+            continue
+        size = sum(r["size"] for r in rows)
+        result.append({**deepcopy(rows[-1]), "id": identity, "token": rows[-1]["symbol"],
+            "size": size, "tranches_n": len(rows),
+            "exit_price": sum(r["exit_price"] * r["size"] for r in rows) / size,
+            **{key: sum(r[key] for r in rows) for key in ("realized_pnl", "fees_paid", "funding_paid")}})
+    return result
 
 
 def paper_panel(report):
