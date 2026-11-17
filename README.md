@@ -669,3 +669,80 @@ Run `ruff check .` and `pytest` (offline). `tests/test_agents_news.py` covers
 registry validation, immutable snapshots, time/fetch budgets and isolation,
 RSS/Atom parsing, dedupe vs verification, classification/relevance, source errors,
 cooldowns, escaped empty/news panels, and Telegram disabled/safe-delivery gates.
+
+## Build 2: Binance public-data analysis (PAPER ONLY)
+
+Registered scanner_spot/scanner_futures and technical_spot/technical_futures are
+isolated, read-only agents AFTER the existing strategy. They neither place orders
+nor alter decisions. No keys, accounts, signed endpoints or execution upgrades.
+
+Sources: Spot https://api.binance.com/api/v3/ (exchangeInfo, ticker/24hr,
+klines, depth); USDT-M https://fapi.binance.com/fapi/v1/ (same endpoints plus
+openInterest and premiumIndex for mark price/last funding). The typed client also
+supports bounded fundingRate history; agents do not fetch that history. Spot
+funding/OI explicitly report not_applicable. No exchange substitution is allowed.
+
+Markets remain separate in state, coverage, candidate lists, TA and OVERVIEW's
+SCANNER section. Every candidate records its market. exchangeInfo supplies runtime
+universe counts: active Spot-tradable symbols versus TRADING USDT perpetuals.
+Quote-volume percentiles are computed within each quote currency (quote_group_n
+recorded); Spot quote currencies are not treated as interchangeable USD values.
+Priority combines that percentile with absolute24h percentage change. Least
+recently completed symbols are scanned first, priority breaking ties.
+
+Completed scans require depth + completed1m bars, plus OI/premium for Futures.
+Coverage counts only completed scans, never ticker rows or attempts. Ranked top5
+candidates retain reasons, ATR/realized volatility, volume surge/ranges and a
+candle-volume-weighted-close profile proxy (NOT actual trades at price). Spread
+and top20 depth notionals are snapshot proxies, not executable liquidity.
+scanned_this_cycle/scanned_symbols count all completed scans, even if top-N drops
+a candidate. cumulative_unique is historical distinct coverage since checkpoint,
+including delisted symbols, NOT current-universe coverage. oldest_data_age_seconds
+is age of oldest successful recorded FETCH, not a guarantee of exchange freshness.
+Added/removed counts compare tradable universe membership across checkpoints,
+not confirmed listing announcements; first-cycle counts are null (no baseline).
+
+scanner_state persists in existing cycle JSON/Supabase persist_paper_cycle, with
+no migration. Newest durable report restores state; local UUID cycle directories
+restore the newest sibling report. Restore errors produce loud tracebacks and an
+explicitly labeled reset, never claimed uninterrupted cumulative coverage. State
+is single-worker like the ledger. Agent timeouts may undercount returned work,
+but never invent coverage. Missing tickers remain unscanned universe members.
+
+TA requires all five frames1m/5m/15m/1h/4h per completed candidate, each up to60
+bars and at least20 ordered completed candles. In-progress bars are excluded.
+Evidence includes momentum/ATR14, volume surge, previous19-bar support/resistance,
+breakouts/breakdowns and recent5 versus prior5 HH/HL or LH/LL structure. Five-frame
+directions/agreement and sample counts are recorded. Up/down scores sum to1 but
+are an UNCALIBRATED logistic momentum/ATR heuristic, NOT calibrated forecast
+probabilities or confidence. No perfect-entry claims. Volume>=3x prior19 mean and
+close moves>=max(1%,3ATR%) are HEURISTIC risk flags, not manipulation detection.
+TA ranking challenges compare only the actually analyzed subset, show n, and
+explain that directional ranking and scalping suitability have different goals.
+
+Each agent keeps independent framework defaults6 fetches/12s; configure
+AGENT_SCANNER_SPOT_FETCH_BUDGET, AGENT_SCANNER_FUTURES_FETCH_BUDGET,
+AGENT_TECHNICAL_SPOT_FETCH_BUDGET, AGENT_TECHNICAL_FUTURES_FETCH_BUDGET and matching
+_TIME_BUDGET_SECONDS, with global AGENT_FETCH_BUDGET/AGENT_TIME_BUDGET_SECONDS
+fallbacks and framework caps20fetches/60s. Defaults permit at most2 Spot scans,
+1 Futures scan and1 five-frame TA candidate per market, often fewer on slow or
+failed data. This is deliberately NOT whole-market coverage each cycle.
+
+Client allowlist is fixed-host GET-only, with per-request timeouts, conservative
+endpoint weights, a200-weight allowance per agent and observed
+X-MBX-USED-WEIGHT-1M guard before2000. Attempts/retries consume both fetch and
+weight budgets. Default one retry on429/5xx uses Retry-After/backoff within remaining
+time;418 stops requests. Review weights if Binance changes them. Network,
+RateLimited, Malformed and GeoBlocked are distinct errors. HTTP403/451 means
+explicit access-denied/geo-block with empty candidates, loud traceback and preserved
+last-known checkpoints, never fake coverage. Render region/accessibility is UNKNOWN;
+no check from this browser is represented as a deployment accessibility test.
+
+HUD output is escaped, wrapped for375px, market-separated, timestamped and labeled
+PAPER MODE / LAST STORED STATE. Details retain full coverage/reasons/provenance,
+TA scores/structure/challenges and honest empty/failure states. /status exposes
+market_analysis.spot and market_analysis.futures via the existing report path.
+Offline synthetic MockTransport tests in tests/test_binance_agents.py cover client
+errors/weights/backoff/allowlist, rotation/coverage/geo handling, indicators,
+structure/heuristics, TA/challenges, state restore and escaped reporting.
+Browser-only development does NOT claim local pytest/ruff runs; PR CI validates.
