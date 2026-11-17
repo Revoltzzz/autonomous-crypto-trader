@@ -161,7 +161,8 @@ def test_nine_research_views_and_extra_audits_remain_no_external_assets(monkeypa
         assert f'<details class="view" id="{identifier}">' in html
     assert '&lt;failed&gt;' in html
     assert 'PAPER MODE' in html
-    assert '<script' not in html and 'https://' not in html
+    assert '<script src=' not in html and 'https://' not in html
+    assert html.count('<script>') == 2
     assert 'cdn' not in html.lower()
     assert api.status()['paper_only'] is True
     for route in api.app.routes:
