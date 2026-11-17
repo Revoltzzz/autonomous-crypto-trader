@@ -48,13 +48,13 @@ def test_registry_no_mutable_input_or_parent_forgery():
 
 
 def test_all_markets_have_identity_only_champions():
-    r = baseline_registry()
+    r = baseline_registry(AT)
     assert set(r.champions) == {"solana", "spot", "futures"}
     assert len(r.versions) == 3
     assert all("not_captured" in v["parameters"]["configuration_status"] for v in r.versions.values())
 
 
-def item(label="unverified", fetched=AT):
+def item(label="unverified", fetched="2026-11-17T13:59:00+00:00"):
     return {"title": "Solana fixture headline", "verification": label,
             "sources": [{"fetched_at": fetched}], "url": "https://example.org/fixture"}
 
@@ -166,7 +166,7 @@ def test_replay_uses_close_not_open_timestamp_and_reports_gaps():
 
 
 def test_futures_skips_without_calling_strategy():
-    r = baseline_registry()
+    r = baseline_registry(AT)
     v = r.versions[r.champions["futures"]]
     def bad(_):
         raise AssertionError("must not evaluate futures")
@@ -194,4 +194,32 @@ def test_registry_rejects_promotion_events_even_after_eligibility():
     with pytest.raises(ValueError):
         StrategyRegistry(before + [{"kind": "promotion", "version_id": v}])
     assert r.events == before
-  
+
+
+def test_news_fetch_exactly_at_decision_is_not_before_it():
+    assert news_context([item(fetched=AT)], AT)["n"] == 0
+
+
+def test_runtime_consumes_current_news_without_retroactive_labels():
+    from act.research.runtime import capture_news_evidence
+    report = {"paper_only": True, "agents": {"news": {"status": "success", "data": {
+        "as_of": LATER, "items": [item(), item("verified", LATER)]}}},
+        "decisions": [{"id": "d", "created_at": AT, "symbol": "SOLANA"}],
+        "binance_paper": {"decisions": [{"at": AT, "market": "spot", "symbol": "SOLANA"}]}}
+    before = deepcopy(report)
+    evidence = capture_news_evidence(report)
+    assert report == before
+    assert len(evidence["decision_records"]) == 2
+    assert all(r["news_context"]["n"] == 1 for r in evidence["decision_records"])
+    assert all(r["strategy_version_id"] is None for r in evidence["decision_records"])
+    assert evidence["cycle_news"]["n"] == 1
+
+
+def test_runtime_news_unavailable_and_missing_time_are_explicit():
+    from act.research.runtime import capture_news_evidence
+    result = capture_news_evidence({"paper_only": True, "decisions": [{"id": "d"}]})
+    assert result["status"] == "news_unavailable"
+    assert result["decision_records"][0]["status"] == "missing_decision_timestamp"
+    with pytest.raises(ValueError):
+        capture_news_evidence({"paper_only": False})
+        
