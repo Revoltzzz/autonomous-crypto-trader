@@ -77,7 +77,7 @@ class StrategyRegistry:
                       "version_id": version_id})
 
 
-def baseline_registry():
+def baseline_registry(created_at):
     """Implementation identities, NOT reconstructed historical parameter settings.
 
     No old trade is attributed to these IDs. Deployment configuration snapshots
@@ -89,6 +89,7 @@ def baseline_registry():
             "configuration_status": "not_captured; historical attribution unavailable"},
             "Existing v1 " + ("Solana candidate strategy" if market == "solana" else
                               "Binance selection/decision pipeline") + "; identity only, no behavior change",
-            "2026-11-17T00:00:00+00:00")
+            created_at)
         registry.baseline(version)
     return registry
+    
