@@ -9,8 +9,12 @@ from html import escape
 from uuid import uuid4
 
 
+
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+
+
 
 
 from act.hud import restyle
@@ -26,11 +30,17 @@ from act.results import load_reports, results_panels
 from act.readiness import readiness_panel
 
 
+
+
 STARTED = time.monotonic()
 LATEST = None
 RECENT = []
 HISTORY_ERROR = None
 LOG = logging.getLogger(__name__)
+
+
+
+
 
 
 
@@ -76,6 +86,10 @@ async def research_loop():
 
 
 
+
+
+
+
 async def warm_results_cache():
     """Read persisted reports once before serving; requests never fetch persistence."""
     global LATEST, RECENT, HISTORY_ERROR
@@ -90,6 +104,10 @@ async def warm_results_cache():
         RECENT = []
         HISTORY_ERROR = "Persisted cycle history read failed; no substitute history. See server logs."
         LOG.exception("RESULTS_STARTUP_HISTORY_FAILED")
+
+
+
+
 
 
 
@@ -109,7 +127,15 @@ async def lifespan(app):
 
 
 
+
+
+
+
 app = FastAPI(title="Autonomous Crypto Trader", lifespan=lifespan)
+
+
+
+
 
 
 
@@ -125,6 +151,10 @@ def health():
 
 
 
+
+
+
+
 @app.get("/status")
 def status():
     return LATEST or {"status": "waiting_for_first_cycle", "paper_only": True,
@@ -133,8 +163,16 @@ def status():
 
 
 
+
+
+
+
 def safe(value):
     return escape(str(value))
+
+
+
+
 
 
 
@@ -151,6 +189,10 @@ def record_table(records, columns, empty):
 
 
 
+
+
+
+
 def trade_views(trades):
     # Display duration only: prices, fees and P&L are never recomputed.
     rows = []
@@ -163,6 +205,10 @@ def trade_views(trades):
             row["holding_duration"] = None
         rows.append(row)
     return rows
+
+
+
+
 
 
 
@@ -189,14 +235,14 @@ def dashboard():
     empty_trades = ("<p>No trades yet - the strategy has not yet produced a BUY.</p>"
                     if account and not result.get("paper_trades") and not result.get("paper_positions") else "")
     positions = record_table(result.get("paper_positions", []), [
-        ("token", "Token"), ("entry_price", "Entry USD"), ("current_price", "Current quote USD"),
+        ("market", "Market (blank=Solana)"), ("token", "Token"), ("entry_price", "Entry USD"), ("current_price", "Current quote USD"),
         ("unrealized_pnl", "Net unrealized P&L USD"), ("stop_loss", "Stop USD"),
         ("stop_distance_pct", "Stop distance %"), ("take_profit", "Target USD"),
         ("target_distance_pct", "Target distance %"), ("age_hours", "Age hours"),
         ("stale_quoted", "Stale quote"), ("quote", "Quote provenance / observed time")],
         "No open paper positions.")
     trades = record_table(trade_views(result.get("paper_trades", [])), [
-        ("token", "Token"), ("entry_price", "Slipped entry USD"), ("exit_reason", "Exit reason"),
+        ("market", "Market (blank=Solana)"), ("token", "Token"), ("entry_price", "Slipped entry USD"), ("exit_reason", "Exit reason"),
         ("exit_price_basis", "Observed exit quote USD"), ("exit_price", "Slipped exit USD"),
         ("realized_pnl", "Net realized P&L USD"), ("fees_paid", "Total fees USD"),
         ("opened_at", "Opened UTC"), ("closed_at", "Closed UTC"),
