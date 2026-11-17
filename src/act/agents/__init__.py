@@ -1,5 +1,6 @@
 """Bounded, read-only research agents. No execution or strategy interface."""
 import asyncio
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,7 +14,11 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 
+
+
 import httpx
+
+
 
 
 LOG = logging.getLogger(__name__)
@@ -21,8 +26,16 @@ LOG = logging.getLogger(__name__)
 
 
 
+
+
+
+
 def utcnow():
     return datetime.now(timezone.utc).isoformat()
+
+
+
+
 
 
 
@@ -37,8 +50,23 @@ def freeze(value):
 
 
 
+
+
+
+
+def thaw(value):
+    """Copy frozen snapshots into JSON-native values at result boundaries."""
+    if isinstance(value, Mapping):
+        return {k: thaw(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [thaw(v) for v in value]
+    return value
+
+
 class Agent(Protocol):
     name: str
+
+
 
 
     def describe(self) -> str: ...
@@ -47,9 +75,15 @@ class Agent(Protocol):
 
 
 
+
+
+
+
 class Registry:
     def __init__(self):
         self._agents = {}
+
+
 
 
     def register(self, agent: Agent):
@@ -61,14 +95,24 @@ class Registry:
         return agent
 
 
+
+
     def all(self):
         return tuple(self._agents.values())
 
 
 
 
+
+
+
+
 class BudgetExceeded(RuntimeError):
     pass
+
+
+
+
 
 
 
@@ -85,6 +129,10 @@ def budget(name, kind, default):
 
 
 
+
+
+
+
 @dataclass
 class Context:
     snapshot: object
@@ -96,9 +144,13 @@ class Context:
     _started: float = field(default_factory=monotonic)
 
 
+
+
     @property
     def remaining(self):
         return max(0, self.seconds - (monotonic() - self._started))
+
+
 
 
     async def fetch(self, url):
@@ -128,6 +180,10 @@ class Context:
 
 
 
+
+
+
+
 async def run_agents(report, *, client=None, registry=None):
     if registry is None:
         from act.agents.news import NewsAgent
@@ -153,6 +209,7 @@ async def run_agents(report, *, client=None, registry=None):
                 data = await asyncio.wait_for(agent.run(context), timeout=seconds)
                 if not isinstance(data, dict):
                     raise TypeError('Agent must return structured dictionary')
+                data = thaw(data)
                 json.dumps(data, allow_nan=False)
                 result = {'status': 'success', 'data': data}
             except Exception as exc:
