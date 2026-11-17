@@ -218,6 +218,21 @@ async def run_cycle(settings=None, client=None, persistence=None) -> dict:
         except Exception as exc:
             log.exception("RESEARCH_NEWS_FAILED; no substitute evidence")
             report["research_news"] = {"status": "failed", "error": str(exc)}
+        from act.research.checkpoint import capture_registry
+        try:
+            report["research_registry"] = await asyncio.to_thread(
+                capture_registry, report, store, settings)
+        except Exception as exc:
+            log.exception("RESEARCH_REGISTRY_FAILED; no replacement identities generated")
+            report["research_registry_error"] = str(exc)
+            report["status"] = "failed"
+            failure = failure or exc
+        from act.research.holding import holding_news
+        try:
+            report["holding_period_news"] = await asyncio.to_thread(holding_news, report, store)
+        except Exception as exc:
+            log.exception("HOLDING_NEWS_FAILED; no inferred attribution")
+            report["holding_period_news"] = {"status": "failed", "error": str(exc)}
         report["news_brief"] = news_brief(report["agents"])
         try:
             report["telegram"] = await push_brief(report["news_brief"])

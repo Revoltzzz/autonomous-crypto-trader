@@ -1,5 +1,83 @@
 # Autonomous Crypto Trader
 
+## Build 4 part 2 — incremental checkpoint / learning release
+
+**PARTIAL implementation, not the completed Build 4 upgrade. PAPER ONLY. Zero
+promotions; existing Solana v1 / Spot v1 champions stay unchanged and Futures v1
+remains data-blocked (HTTP 451).** No scanner/TA/risk or paper fill behavior changes.
+
+### Strategy lifecycle and durable identity registration
+
+After the existing paper decisions, research.checkpoint restores the latest
+research_registry from the same persisted cycle JSON used by Supabase's
+existing transactional RPC (or local cycle reports). It validates content-addressed
+append-only version events and all three market pointers before reuse. IDs are
+created once, not per cycle. Corrupt/unsupported registry state and persistence
+errors fail loudly; a remote error never resets identities or falls back to disk.
+No new database migration, service or credentials. Single-writer semantics remain.
+
+Registration captures implementation identity plus the non-secret fee/slippage
+settings only. **Full policy/config snapshots, strategy dispatch and prospective
+ledger attribution are NOT activated.** Cost drift is recorded without rewriting
+versions or silently moving pointers. Old trades get no guessed version ID. The
+checkpoint is not a tamper-proof database or a multi-writer compare-and-swap lock.
+
+Phase 2 evidence gates remain: a challenger's **own** >=100 trades, >=8 weeks,
+positive net expectancy after costs, PF >1.3, mark-to-market max drawdown <10%, and
+walk-forward consistency, with completed backtest and forward-shadow evidence.
+Small-n is descriptive only. Existing closed-trade drawdown is NOT mark-to-market
+DD. A review-only evaluator is not an actuator or proof of provenance. This
+increment adds **no promotion actuator**, so nothing can promote from these IDs.
+
+### Backtest honesty and still-deferred work
+
+The existing replay is decision-only, uses completed-candle prefixes, reports gaps
+without interpolation and produces no fills. There is still **no executable
+cost-complete backtester in this incremental release**. Historical klines cannot
+recreate the paper model's contemporary depth, spread, queue or market impact.
+A later kline implementation must label **every result APPROXIMATE**, record its
+entry/exit timing, slippage, fees/minimums, version, n, symbols, date range and gaps,
+keep simulated accounting out of the paper ledger, and return insufficient_data
+when assumptions cannot be supported. Futures is not a geo-block workaround.
+
+Also still deferred: parameter/news-informed challenger generation and an actual
+forward shadow runner with accumulating own outcomes; full cumulative per-version
+ledger attribution and champion/challenger HUD/digest scoreboard; durable one-shot
+OOS orchestration, evaluation journal and evidence-proven promotion actuator.
+Foundation helpers alone do not satisfy any of these integration requirements.
+No claim of the complete Build 4 delivery or 375px research scoreboard is made.
+
+### Learning design, bounded budget and holding-period news
+
+LEARNING_FOLLOWUP_BUDGET is now **10 source calls/cycle** (was 6), configurable
+0..20. LEARNING_BACKLOG_CAP is now **500 sessions** (was 200), configurable
+1..1000. Existing per-request counting, grace windows, oldest-first selection and
+terminal missing labels remain unchanged. Raising limits may reduce capped misses;
+it does not prove coverage improved, guarantee awake monitoring, or recover missed
+prices. Explicit environment overrides win. Returns are never imputed; previously
+missed horizons remain missed, and null measured outcomes stay null.
+
+After a trade closes, holding_period_news records relevant and market-wide
+contexts from already-recorded news in at most 500 stored reports plus this cycle,
+bounded to 2000 unique items. All supporting source fetches must be strictly before
+the close and at least one during the holding period; later corroboration cannot
+leak backwards. Duplicate snapshots are deduplicated. Verified/unverified labels
+are retained, never converted into sentiment or causal claims. Title-token matches
+are low-recall hints, not token identity verification. Coverage is **always partial
+stored-snapshot coverage**: missing or truncated history is not proof of no news.
+This sidecar does not edit trades, returns, learning checkpoints or prior reports.
+Failures are labeled explicitly. No new public-news fetch is introduced.
+
+### Guarantees and validation boundary
+
+Only this repository is changed. No real orders, exchange accounts, keys, signed
+endpoints, live-execution path, Render/billing changes, geo-block work or HFTENGINE
+code copying. Immutable copied snapshots are retained. The existing PAPER MODE /
+LAST STORED STATE UI labels are unchanged. Offline fixtures cover checkpoint
+round-trips/corruption/drift, remote failure, bounded learning defaults and holding
+news cutoffs/no mutation. CI (ruff + pytest) is the validator; no local run claimed.
+
+
 > **PAPER TRADING ONLY.** Research and simulation only. No real-money execution, exchange credentials, wallet keys or signing. Users must place any real trades manually outside this software. Simulated results are not investment advice.
 
 ## Architecture

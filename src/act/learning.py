@@ -44,7 +44,7 @@ def number(value):
 
 def config():
     result = {}
-    for key, default, low, high in (("budget", 6, 0, 20), ("backlog", 200, 1, 1000),
+    for key, default, low, high in (("budget", 10, 0, 20), ("backlog", 500, 1, 1000),
                                   ("grace_seconds", 3600, 0, 86400)):
         name = {"budget": "LEARNING_FOLLOWUP_BUDGET", "backlog": "LEARNING_BACKLOG_CAP",
                 "grace_seconds": "LEARNING_GRACE_SECONDS"}[key]
