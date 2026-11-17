@@ -110,7 +110,11 @@ async def run_agents(report, *, client=None, registry=None):
         from act.agents.news import NewsAgent
         registry = Registry()
         registry.register(NewsAgent())
-    snapshot = freeze(deepcopy(report))
+        from act.agents.scanner import MarketScannerAgent, TechnicalAnalysisAgent
+        for market in ("spot", "futures"):
+            registry.register(MarketScannerAgent(market))
+        for market in ("spot", "futures"):
+            registry.register(TechnicalAnalysisAgent(market))
     results = {}
     async with httpx.AsyncClient(headers={'User-Agent': 'ACT-PaperResearch/1.0'}) as owned:
         for agent in registry.all():
@@ -119,7 +123,8 @@ async def run_agents(report, *, client=None, registry=None):
             try:
                 seconds = budget(agent.name, 'TIME_BUDGET_SECONDS', 12)
                 fetches = int(budget(agent.name, 'FETCH_BUDGET', 6))
-                context = Context(snapshot, client if client is not None else owned, seconds, fetches)
+                agent_snapshot = freeze({**deepcopy(report), "agents": deepcopy(results)})
+                context = Context(agent_snapshot, client if client is not None else owned, seconds, fetches)
                 if seconds == 0:
                     raise BudgetExceeded('Agent time budget is zero')
                 data = await asyncio.wait_for(agent.run(context), timeout=seconds)

@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 
 from act.hud import restyle
 from act.agents.news import news_panel, news_brief
+from act.agents.market_reporting import scanner_panel
 from act.config.settings import Settings
 from act.intelligence import intelligence_panel
 from act.logging_setup import setup_logging
@@ -160,7 +161,7 @@ def dashboard():
         ("candle_count", "Completed candles"), ("reason", "Unavailable reason")],
         "No candidate decisions yet.")
     panels = (results_panels(result, RECENT, HISTORY_ERROR) + intelligence_panel(result)
-              + readiness_panel(result, RECENT))
+              + readiness_panel(result, RECENT) + scanner_panel(result))
     empty_trades = ("<p>No trades yet - the strategy has not yet produced a BUY.</p>"
                     if account and not result.get("paper_trades") and not result.get("paper_positions") else "")
     positions = record_table(result.get("paper_positions", []), [
