@@ -758,7 +758,7 @@ single-writer cycle; history is never rewritten. Do not run concurrent workers.
 
 Two new simulated compartments start with $10,000 each (Spot and USDT-M Futures).
 These are virtual capital, not deposits. market_accounts separates Solana, Spot,
-Futures and paper_account totals them. This capital discontinuity must not be
+Futures and portfolio_account totals them; legacy paper_account remains Solana. This capital discontinuity must not be
 interpreted as investment return. Existing historical Solana records are intact.
 All positions are unleveraged long simulations, not a promise of profitability.
 
@@ -791,9 +791,9 @@ FUTURES_TAKER_RATE=0.0005. All simulated executions are taker fills; no BNB/VIP
 rebates. Override via BINANCE_SPOT_MAKER_RATE, BINANCE_SPOT_TAKER_RATE,
 BINANCE_FUTURES_MAKER_RATE, BINANCE_FUTURES_TAKER_RATE (range0..0.01).
 Spot source: https://www.binance.com/en/fee/trading (regular0.100%/0.100%).
-Futures reference: https://www.binance.com/en/fee/futureFee . The browser returned
-no fee rows on17Nov2026: futures0.020%/0.050% are conservative configured
-assumptions pending verification, not a verified current account fee quote.
+Futures source: https://www.binance.com/en/fee/futureFee (regular USDT
+maker0.0200%/taker0.0500%, verified17Nov2026). No BNB discounts or promotional
+rebates are assumed; these are published regular rates, not an account fee quote.
 Funding source: https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History .
 Recorded fundingTime, fundingRate and markPrice are applied only while a position
 is open, including negative-rate credits; checkpoints prevent duplicate accrual.
@@ -807,7 +807,7 @@ A scheduled/free-host cycle is NOT continuous tick monitoring; TP/SL are simulat
 at observed cycles and may gap. No claim of exchange-native stop protection.
 
 /status includes binance_paper risk/decisions/positions, binance_learning records,
-and market_accounts. HUD includes escaped/wrapped PAPER positions, marks, TP/SL,
+market_accounts and portfolio_account. HUD includes escaped/wrapped PAPER positions, marks, TP/SL,
 unrealized P&L and risk caps/halts/vetoes. Small samples always carry n.
 Binance fully closed positions join existing paper_trades/readiness inputs once;
 partial tranches remain in the ledger and do not inflate independent sample n.
