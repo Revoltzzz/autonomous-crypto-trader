@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import dataclass
 import math
+import os
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -12,6 +13,21 @@ from act.agents import utcnow
 Market = Literal["spot", "futures"]
 BASES = {"spot": "https://api.binance.com/api/v3/",
          "futures": "https://fapi.binance.com/fapi/v1/"}
+# Exact origins only: no credentials, ports, paths, queries, mirrors or proxies.
+OFFICIAL_BASES = {
+    "spot": {"https://api.binance.com", "https://data-api.binance.vision"},
+    "futures": {"https://fapi.binance.com"},
+}
+
+
+def configured_base(market):
+    default = BASES[market].split("/api/")[0].split("/fapi/")[0]
+    base = os.environ.get(f"BINANCE_{market.upper()}_BASE_URL", default)
+    if base not in OFFICIAL_BASES[market]:
+        raise ValueError(f"Invalid BINANCE_{market.upper()}_BASE_URL: official origin required")
+    return base
+
+
 WEIGHTS = {"exchangeInfo": 20, "ticker/24hr": 80, "klines": 2, "depth": 5,
            "premiumIndex": 10, "fundingRate": 1, "openInterest": 1}
 FUTURES_ONLY = {"premiumIndex", "fundingRate", "openInterest"}
@@ -58,6 +74,7 @@ class BinanceData:
                  retries=1, sleep=asyncio.sleep):
         if market not in BASES:
             raise ValueError("Unknown Binance market")
+        self.base_url = configured_base(market)
         self.market = market
         self.context = context
         self.weight_limit = weight_limit
@@ -96,7 +113,8 @@ class BinanceData:
             raise ValueError("Klines require supported interval and limit=60")
         if endpoint == "fundingRate" and params.get("limit") != 100:
             raise ValueError("Funding history limit must be 100")
-        url = BASES[self.market] + endpoint
+        prefix = "/api/v3/" if self.market == "spot" else "/fapi/v1/"
+        url = self.base_url + prefix + endpoint
         for attempt in range(self.retries + 1):
             weight = self.weight(endpoint, params)
             if self.weight_used + weight > self.weight_limit or self.header_weight + weight > 2000:
@@ -111,7 +129,7 @@ class BinanceData:
                 raise NetworkError(type(exc).__name__) from exc
             except ValueError as exc:
                 raise Malformed(str(exc)) from exc
-            source = {"market": self.market, "source_url": url, "params": dict(params),
+            source = {"base_url": self.base_url, "market": self.market, "source_url": url, "params": dict(params),
                       "fetched_at": utcnow(), "http_status": response.status_code,
                       "weight_used": self.weight_used}
             self.context.provenance.append(source)
