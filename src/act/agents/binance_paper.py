@@ -1,9 +1,9 @@
 """Binance PAPER ONLY agents. Public reads; no exchange order/account interface.
 
+
 Append-only events share PaperLedger and its existing Supabase snapshot/RPC.
 Solana execution and account state are deliberately not inputs to these agents.
 """
-import asyncio
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -12,15 +12,17 @@ import hashlib
 from html import escape
 import json
 import logging
-import math
 import os
 from statistics import correlation
 
+
 import httpx
 
+
 from act.agents import Context, budget
-from act.agents.scanner import TIMEFRAMES, candles
+from act.agents.scanner import TIMEFRAMES, candles, directional_score, indicators, structure
 from act.binance_data import BinanceData, BinanceError, number
+
 
 LOG = logging.getLogger(__name__)
 SPOT_MAKER_RATE = .001
@@ -31,8 +33,12 @@ MODEL = "post-decision-1m-close + half-spread + top20-VWAP-impact-v1"
 MARKETS = ("spot", "futures")
 
 
+
+
 def stamp():
     return datetime.now(timezone.utc).isoformat()
+
+
 
 
 def ms(value):
@@ -42,6 +48,8 @@ def ms(value):
     return at.timestamp() * 1000
 
 
+
+
 def positive(value):
     value = number(value)
     if value <= 0:
@@ -49,10 +57,14 @@ def positive(value):
     return value
 
 
+
+
 def fresh(source, now, seconds=120):
     age = (ms(now) - ms(source["fetched_at"])) / 1000
-    if not 0 <= age <= seconds:
+    if not -60 <= age <= seconds:
         raise ValueError("STALE_OR_FUTURE public data; no fill")
+
+
 
 
 def fee_rate(market, maker=False):
@@ -67,6 +79,8 @@ def fee_rate(market, maker=False):
     return value
 
 
+
+
 @dataclass(frozen=True)
 class RiskLimits:
     risk_fraction: float = .005
@@ -78,6 +92,7 @@ class RiskLimits:
     latency_seconds: int = 5
     max_pending_seconds: int = 1800
 
+
     def __post_init__(self):
         for key in ("risk_fraction", "max_exposure", "instrument_exposure", "daily_loss", "correlation_limit"):
             if not 0 < number(getattr(self, key)) <= 1:
@@ -86,10 +101,14 @@ class RiskLimits:
             raise ValueError("Invalid count/latency")
 
 
+
+
 def initial_state():
     return {"version": 1, "positions": {}, "pending": [], "trades": [], "used": [],
             "halt": None, "daily_halt": None, "day": None, "day_start": 20000.,
             "accounts": {m: {"initial": 10000., "cash": 10000.} for m in MARKETS}}
+
+
 
 
 def restore(ledger):
@@ -97,11 +116,15 @@ def restore(ledger):
     return deepcopy(events[-1]["state"]) if events else initial_state()
 
 
+
+
 def round_size(size, meta):
     filters = {r["filterType"]: r for r in meta["filters"]}
     lot = filters["LOT_SIZE"]
     step = Decimal(str(positive(lot["stepSize"])))
     return float((Decimal(str(positive(size))) / step).to_integral_value(rounding=ROUND_DOWN) * step)
+
+
 
 
 def minimums(size, price, meta):
@@ -124,6 +147,8 @@ def minimums(size, price, meta):
     low = Decimal(str(f.get("minNotional", f.get("notional"))))
     if q * p < low or (f.get("maxNotional") and q * p > Decimal(str(f["maxNotional"]))):
         raise ValueError("MIN_NOTIONAL/NOTIONAL rejected simulated quantity")
+
+
 
 
 def fill_price(book, bars, quantity, decision_at, now, latency=5, sell=False):
@@ -165,6 +190,8 @@ def fill_price(book, bars, quantity, decision_at, now, latency=5, sell=False):
                    "depth_source": book.provenance, "kline_source": bars.provenance}
 
 
+
+
 def funding(position, rows, now):
     """Long-only, unlevered perps. Actual timestamp/rate/mark, not an assumed 8h clock."""
     cutoff = position.get("funding_through", position["opened_at"])
@@ -180,6 +207,8 @@ def funding(position, rows, now):
             amount += cost
             evidence.append({**row, "cost": cost, "size": position["size"]})
     return amount, evidence
+
+
 
 
 def portfolio(state):
@@ -199,14 +228,19 @@ def portfolio(state):
     return out
 
 
+
+
 class RiskManagementAgent:
     name = "risk_management"
+
 
     def __init__(self, limits=None):
         self.limits = limits or RiskLimits()
 
+
     def describe(self):
         return "PAPER ONLY; VETO authority; no recovery sizing or activity targets"
+
 
     def approve(self, state, candidate, meta, now, *, filling=False):
         lim = self.limits
@@ -228,7 +262,7 @@ class RiskManagementAgent:
         market, symbol = candidate["market"], candidate["symbol"]
         if market not in MARKETS or candidate.get("quote_asset", "USDT") != "USDT":
             raise ValueError("UNSUPPORTED_MARKET_OR_QUOTE")
-        fresh({"fetched_at": candidate["as_of"]}, now, 300 if filling else 120)
+        fresh({"fetched_at": candidate["as_of"]}, now, 1800 if filling else 120)
         if set(candidate["frames"]) != set(TIMEFRAMES) or candidate["up_score"] < .6:
             raise ValueError("TA_INCOMPLETE_OR_NOT_CORROBORATED")
         if not candidate.get("timeframe_agreement"):
@@ -276,11 +310,15 @@ class RiskManagementAgent:
                 "risk_budget": equity * lim.risk_fraction}
 
 
+
+
 class TradeExecutionSimulationAgent:
     name = "trade_execution_simulation"
 
+
     def describe(self):
         return "PAPER ONLY public-data delayed fills; no live counterpart"
+
 
     def open(self, state, approved, price, evidence, now):
         market = approved["market"]
@@ -299,6 +337,7 @@ class TradeExecutionSimulationAgent:
         state["used"].append(p["id"])
         state["accounts"][market]["cash"] -= cost
         return p
+
 
     def close(self, state, p, quantity, price, evidence, now, reason):
         ratio = quantity / p["size"]
@@ -321,6 +360,8 @@ class TradeExecutionSimulationAgent:
         return trade
 
 
+
+
 def returns(bars, now):
     rows = candles(bars.data, ms(now) / 1000)
     if ms(now) - rows[-1][0] > 180000:
@@ -328,12 +369,17 @@ def returns(bars, now):
     return [[int(b[0]), b[4] / a[4] - 1] for a, b in zip(rows, rows[1:])]
 
 
+
+
 async def run_pipeline(report, ledger, *, client=None, limits=None):
     """Single writer; record every approval/veto/fill in the existing event ledger.
+
 
     Pending decisions survive cycles; open risk is managed before new approvals.
     Any critical error persists a sticky emergency halt. Exits remain permitted.
     """
+    if report.get("paper_only") is not True:
+        raise ValueError("PAPER ONLY invariant required")
     state = restore(ledger)
     risk, executor = RiskManagementAgent(limits), TradeExecutionSimulationAgent()
     now = stamp()
@@ -422,6 +468,7 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
                     record("NO_FILL", str(exc), position_id=p["id"])
                     if "WAIT_LATENCY" not in str(exc):
                         state["halt"] = str(exc)
+                        p["mark"], p["mark_at"] = None, None
             total = portfolio(state)["total"]
             if state["day"] != now[:10] and total["equity"] is not None:
                 state["day"], state["day_start"] = now[:10], total["equity"]
@@ -431,17 +478,27 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
             pending, state["pending"] = state["pending"], []
             for candidate in pending:
                 try:
-                    if ms(now) - ms(candidate["as_of"]) > 300000:
+                    if ms(now) - ms(candidate["decision_at"]) > risk.limits.max_pending_seconds * 1000:
                         raise ValueError("EXPIRED_APPROVAL; re-analysis required")
                     bars, rs = await data(candidate["market"], candidate["symbol"])
                     book = await apis[candidate["market"]].depth(candidate["symbol"])
                     metadata = await meta(candidate["market"], candidate["symbol"])
                     price, model = fill_price(book, bars, candidate["size"], candidate["decision_at"],
                                               now, risk.limits.latency_seconds)
-                    candidate.update(fill_price=price, returns=rs)
+                    frames, provenance = {}, []
+                    for interval in TIMEFRAMES:
+                        current = bars if interval == "1m" else await apis[candidate["market"]].klines(candidate["symbol"], interval)
+                        fresh(current.provenance, now)
+                        completed = candles(current.data, ms(now) / 1000)
+                        frames[interval] = dict(indicators(completed), market_structure=structure(completed))
+                        provenance.append(current.provenance)
+                    candidate.update(directional_score(list(frames.values())))
+                    candidate.update(fill_price=price, returns=rs, frames=frames, as_of=now, provenance=provenance)
                     approved = risk.approve(state, candidate, metadata, now, filling=True)
                     # Never enlarge a previously approved order after price/equity changes.
                     approved["size"] = min(approved["size"], candidate["size"])
+                    price, model = fill_price(book, bars, approved["size"], candidate["decision_at"],
+                                              now, risk.limits.latency_seconds)
                     minimums(approved["size"], price, metadata)
                     p = executor.open(state, approved, price, model, now)
                     record("OPEN", approved["approval_reason"], position=deepcopy(p))
@@ -513,6 +570,8 @@ async def run_pipeline(report, ledger, *, client=None, limits=None):
     return state
 
 
+
+
 def paper_panel(report):
     data = report.get("binance_paper") or {}
     if not data:
@@ -527,3 +586,22 @@ def paper_panel(report):
         out += '<article><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + safe({**view, "unrealized_pnl": unrealized}) + '</pre></article>'
     out += '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + safe({"accounts": report.get("market_accounts"), "risk": data.get("risk"), "closed_trades_n": data.get("closed_trades_n")}) + '</pre></section>'
     return out
+
+def validate_event(event):
+    if event.get("kind") != "binance_paper" or not event.get("cycle_id"):
+        raise ValueError("Invalid Binance ledger event")
+    s = event["state"]
+    if s["version"] != 1 or set(s["accounts"]) != set(MARKETS):
+        raise ValueError("Unknown Binance paper state")
+    ms(event["at"])
+    json.dumps(s, allow_nan=False)
+    for market in MARKETS:
+        positive(s["accounts"][market]["initial"])
+        number(s["accounts"][market]["cash"])
+    if len(s["used"]) != len(set(s["used"])):
+        raise ValueError("Duplicate Binance fill identity")
+    for p in s["positions"].values():
+        if p["market"] not in MARKETS or p["id"] not in s["used"]:
+            raise ValueError("Invalid Binance position")
+        positive(p["size"])
+        positive(p["entry_price"])
