@@ -121,6 +121,7 @@ class BinanceData:
                 raise RateLimited("Binance conservative request-weight budget exhausted")
             self.weight_used += weight
             request_url = url + ("?" + urlencode(params) if params else "")
+            provenance_start = len(self.context.provenance)
             try:
                 response = await self.context.fetch(request_url)
             except httpx.HTTPStatusError as exc:
@@ -129,6 +130,9 @@ class BinanceData:
                 raise NetworkError(type(exc).__name__) from exc
             except ValueError as exc:
                 raise Malformed(str(exc)) from exc
+            finally:
+                for entry in self.context.provenance[provenance_start:]:
+                    entry["base_url"] = self.base_url
             source = {"base_url": self.base_url, "market": self.market, "source_url": url, "params": dict(params),
                       "fetched_at": utcnow(), "http_status": response.status_code,
                       "weight_used": self.weight_used}
