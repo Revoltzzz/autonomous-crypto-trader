@@ -8,12 +8,15 @@ from datetime import datetime
 from html import escape
 from uuid import uuid4
 
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+
 
 from act.hud import restyle
 from act.agents.news import news_panel, news_brief
 from act.agents.market_reporting import scanner_panel
+from act.agents.binance_paper import paper_panel
 from act.config.settings import Settings
 from act.intelligence import intelligence_panel
 from act.logging_setup import setup_logging
@@ -22,11 +25,14 @@ from act.persistence import get_persistence
 from act.results import load_reports, results_panels
 from act.readiness import readiness_panel
 
+
 STARTED = time.monotonic()
 LATEST = None
 RECENT = []
 HISTORY_ERROR = None
 LOG = logging.getLogger(__name__)
+
+
 
 
 async def research_loop():
@@ -68,6 +74,8 @@ async def research_loop():
         await asyncio.sleep(1200)
 
 
+
+
 async def warm_results_cache():
     """Read persisted reports once before serving; requests never fetch persistence."""
     global LATEST, RECENT, HISTORY_ERROR
@@ -84,6 +92,8 @@ async def warm_results_cache():
         LOG.exception("RESULTS_STARTUP_HISTORY_FAILED")
 
 
+
+
 @asynccontextmanager
 async def lifespan(app):
     setup_logging()
@@ -97,7 +107,11 @@ async def lifespan(app):
             await task
 
 
+
+
 app = FastAPI(title="Autonomous Crypto Trader", lifespan=lifespan)
+
+
 
 
 @app.get("/health")
@@ -109,14 +123,20 @@ def health():
             "results_history_error": HISTORY_ERROR}
 
 
+
+
 @app.get("/status")
 def status():
     return LATEST or {"status": "waiting_for_first_cycle", "paper_only": True,
                       "news_brief": news_brief({})}
 
 
+
+
 def safe(value):
     return escape(str(value))
+
+
 
 
 def record_table(records, columns, empty):
@@ -127,6 +147,8 @@ def record_table(records, columns, empty):
     if not rows:
         rows = f'<tr><td colspan="{len(columns)}">{safe(empty)}</td></tr>'
     return f'<div class="scroll"><table><thead><tr>{headers}</tr></thead><tbody>{rows}</tbody></table></div>'
+
+
 
 
 def trade_views(trades):
@@ -141,6 +163,8 @@ def trade_views(trades):
             row["holding_duration"] = None
         rows.append(row)
     return rows
+
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -161,7 +185,7 @@ def dashboard():
         ("candle_count", "Completed candles"), ("reason", "Unavailable reason")],
         "No candidate decisions yet.")
     panels = (results_panels(result, RECENT, HISTORY_ERROR) + intelligence_panel(result)
-              + readiness_panel(result, RECENT) + scanner_panel(result))
+              + readiness_panel(result, RECENT) + scanner_panel(result) + paper_panel(result))
     empty_trades = ("<p>No trades yet - the strategy has not yet produced a BUY.</p>"
                     if account and not result.get("paper_trades") and not result.get("paper_positions") else "")
     positions = record_table(result.get("paper_positions", []), [
