@@ -1,6 +1,6 @@
 """Offline prerequisite evidence, NOT all-market dispatch equivalence."""
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import json
 from types import SimpleNamespace
 
@@ -225,4 +225,4 @@ def test_solana_effective_config_roundtrip_bytes(
     restored = evaluate(pool, security, config=config, **deepcopy(args))
     assert original.decision == restored.decision == expected
     assert prove_case(name, original, restored)["bytes"] > 0
-          
+            
