@@ -1,7 +1,4 @@
-"""Durable, single-writer research identities in the existing cycle transaction.
-
-This is registration, NOT strategy dispatch. No execution or ledger interfaces.
-"""
+"""Durable PAPER ONLY research checkpoints; dispatch remains disabled."""
 import json
 from copy import deepcopy
 
@@ -12,7 +9,7 @@ SCHEMA = 1
 
 
 def load_registry(store):
-    """No fallback on remote errors or malformed state. Missing is first activation."""
+    """No fallback on remote errors or malformed state."""
     if hasattr(store, "_request"):
         rows = store._request("GET", "cycles", params={
             "select": "report->research_registry", "order": "completed_at.desc",
@@ -52,12 +49,15 @@ def validate(state):
 
 
 def capture_registry(report, store, settings):
-    """Called after unchanged paper decisions; saved atomically with that cycle.
+    """Append observations on write, inside the existing cycle transaction.
 
-    IDs survive restarts; settings changes never silently rewrite a version.
-    Only explicit non-secret cost settings are captured. Strategy environment
-    snapshots and version dispatch remain unavailable, so attribution is disabled.
+    Legacy champions and historical events are never reinterpreted. Observation
+    capture is incomplete, NOT a full policy migration or activation proof.
+    Import locally to avoid the validator/observation module dependency cycle.
+    Any capture or migration error propagates; no silent fallback.
     """
+    from act.research.dispatch_safety import effective_observation, migrate_observation
+
     if report.get("paper_only") is not True:
         raise ValueError("PAPER ONLY required")
     state = load_registry(store)
@@ -84,4 +84,4 @@ def capture_registry(report, store, settings):
     state["attribution_status"] = "disabled_until_full_policy_snapshot_and_dispatch"
     state["promotion_status"] = "disabled; no actuator in this incremental release"
     state["champions"] = registry.champions
-    return deepcopy(state)
+    return migrate_observation(state, effective_observation(settings), report["started_at"])
