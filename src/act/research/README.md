@@ -1,3 +1,25 @@
+## Build 4 part 7 — standalone source-backed capture; dispatch OFF
+
+PAPER ONLY. `act.research.semantic_capture.capture_policy` now captures qualified production rule bodies, named assignments and guards (not only hashes), effective settings/bounds/sources including ConcentrationSettings, fees and Binance control values, and explicitly scoped caller-supplied dynamic instrument minimums. No HTTP or checkpoint/runtime behavior was added.
+
+| Market | Standalone capture / resolver test | Complete semantic capture |
+|---|---|---|
+| Solana v1 | source-backed rules + effective settings/costs; offline full PR #23 resolver test | NOT independently established; Binance minimums not applicable |
+| Spot v1 | same plus exact supplied instrument filters; synthetic full-resolver test | NOT independently established; actual instrument scope/values must be supplied |
+| Futures v1 | blocked_http_451, no invented instruments/minimums, tradable=false; blocked-state full-resolver test | blocked-state only, NOT a tradable futures capture |
+
+**Partial Priority 1 delivery, not complete semantic-policy capture.** The four-section resolver proves schema/pointer/drift compatibility, not semantic completeness or independent decision-byte equivalence. Source-backed rules remain data, not an executable policy evaluator. Values are resolution-time, not cycle-frozen; custom injected configs/limits are not represented. Resolved Settings constructor/env/dotenv origins cannot be recovered. Fingerprints are shape-checked, not authenticated. Offline synthetic tests are labeled and fixture-bounded, not observed market evidence.
+
+Live paper decisions, legacy champions and existing partial observations remain unchanged. Independent all-market dual-path equivalence, full-snapshot upgrade-on-write migration, persisted-champion dispatch and a real ACT_DISPATCH_MODE=off kill switch remain deferred. Dispatch stays OFF with no activation path added. No risk/scanner/TA/fill changes, exchange accounts/keys/signed endpoints/live orders, geo-block work, Render/billing or HFTENGINE changes. Browser-only environment: CI (ruff + pytest) is the validator; no local runs claimed.
+
+Earlier Build sections below are historical and do not imply deferred work was completed.
+
+### Capture API and limits
+
+`capture_policy(settings, market, *, at, instruments=None, required_symbols=())` returns immutable canonical data and detached `.policy` exports. It does not register, persist or activate the result. For Spot, pass actual public instrument rows with status=available, source, fetched_at, symbols and the exact required-symbol scope. Original LOT_SIZE, optional MARKET_LOT_SIZE and NOTIONAL/MIN_NOTIONAL fields/decimal strings are retained; missing required instruments or minimums fail loudly. Full exchange-universe coverage is not inferred. For blocked Futures supply blocked_http_451 with no symbols; this cannot authorize an instrument.
+
+The rule inventory retains full qualified production definitions plus assignments and guards, preserving formula/default/branch order/veto text. This source inventory is not yet a separately normalized policy evaluator. Resolver tests register all three captured policies as a synthetic all-market registry and invoke the unchanged full PR #23 resolver per market. They test structural acceptance, not independent hardcoded-vs-dispatched equivalence. No legacy identity champion or partial observation is relabeled as complete.
+
 ## Build 4 part 6 — PARTIAL observation integrity, dispatch OFF
 
 PAPER ONLY. This browser-only increment does **not** finish Priority 1. Before the
