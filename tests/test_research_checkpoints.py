@@ -35,7 +35,8 @@ def test_registry_local_restart_and_detached_pointers(tmp_path):
     assert restored["observed_at"] == END
     restored["champions"].clear()
     assert len(load_registry(store)["champions"]) == 3
-    assert len(state["events"]) == 6
+    assert len(state["events"]) == 9
+    assert len(state["policy_observations"]) == 3
     assert "disabled" in state["attribution_status"]
     assert "disabled" in state["promotion_status"]
 
@@ -46,7 +47,9 @@ def test_registry_cost_drift_does_not_rewrite_identity(tmp_path):
     store.save({**report(), "research_registry": old}, None)
     new = capture_registry(report(), store, Settings(fee_pct=.3))
     assert new["configuration_drift"]
-    assert old["events"] == new["events"]
+    assert new["events"][:len(old["events"])] == old["events"]
+    assert len(new["events"]) == len(old["events"]) + 3
+    assert new["champions"] == old["champions"]
     assert old["registration_cost_settings"] == new["registration_cost_settings"]
     assert new["current_cost_settings"]["fee_pct"] == .3
 
