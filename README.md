@@ -1,3 +1,13 @@
+## Build 4 part 5 — partial persistence increment, dispatch OFF
+
+PAPER ONLY. Priority 1 is NOT complete. Checkpoint capture now calls the existing effective-observation and append-only migration helpers inside the cycle checkpoint path. Legacy identity/cost events remain an unchanged prefix; champion pointers stay at the same v1 IDs. Unchanged observations are idempotent; changed observations append children. Capture/validation errors propagate, not silently downgrade. These remain incomplete observations, NOT resolver-complete policy snapshots. No historical checkpoint is rewritten.
+
+Runtime decisions still use hardcoded paths. No persisted-champion dispatcher or ACT_DISPATCH_MODE switch is wired. ACT_POLICY_DISPATCH=false is the existing prerequisite-helper default; true raises DISPATCH_BLOCKED and cannot activate trading. Do not treat that helper as a production kill switch. Independent all-market dual-path byte equivalence is still missing; dispatch must remain OFF. Existing same-evaluator Solana roundtrips are not independent evidence. Futures remains blocked_http_451.
+
+New offline persistence integration tests cover initial write/idempotence, legacy event prefix and champions, environment-change append, and loud capture failure. CI ruff + pytest is the validator; browser-only development, no local Python or shell execution. Environment values are resolution-time observations, not cycle-frozen inputs. Fixture evidence is small-n, bounded and non-exhaustive; no profitability claim.
+
+Still required: complete named rules including dynamic exchange minimums, selection/entry/exit/sizing/costs and effective bounds; resolver acceptance; independent Solana/Spot/Futures-limited corpus covering all vetoes and boundaries; full snapshot migration; persisted-pointer resolution and per-market fail-closed runtime dispatch with a real kill switch, gated on green proofs. Shadows, attribution/scoreboard, backtester, OOS and promotion remain deferred. No risk, scanner/TA, fill-model, exchange accounts/keys/signed endpoints, geo-block, live-execution, Render/billing or HFTENGINE changes; no external code copied.
+
 ## Build 4 part 4: PARTIAL dispatch prerequisites — NOT activated
 
 PAPER ONLY. Priority 1 is **not complete**. research/dispatch_safety.py records
