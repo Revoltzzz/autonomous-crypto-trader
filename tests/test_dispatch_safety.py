@@ -36,8 +36,13 @@ def observation(monkeypatch):
 
 
 def legacy(tmp_path):
-    return capture_registry({"paper_only": True, "started_at": AT},
-                            LocalPersistence(tmp_path), Settings(_env_file=None))
+    state = capture_registry({"paper_only": True, "started_at": AT},
+                             LocalPersistence(tmp_path), Settings(_env_file=None))
+    # Reconstruct the pre-observation identity/cost checkpoint explicitly.
+    state["events"] = state["events"][:6]
+    for key in ("policy_observations", "policy_migration_status", "dispatch_status"):
+        state.pop(key, None)
+    return state
 
 
 def test_capture_known_model_completeness_and_bounds(observation):
