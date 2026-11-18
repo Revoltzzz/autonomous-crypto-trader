@@ -80,11 +80,80 @@ def effective_observation(settings):
             for market in MARKETS}, "gaps": list(GAPS)}
 
 
+
+def validate_observation(observation):
+    """Validate partial capture contents, not just their field-name inventory.
+
+    This is NOT a completeness or equivalence proof. No environment is re-read:
+    stored resolved values are validated directly against production models.
+    """
+    encoded(observation)
+    for cls in MODELS:
+        row = observation["models"][cls.__name__]
+        if set(row) != {"values", "bounds", "sources"}:
+            raise ValueError("Observation model sections mismatch")
+        resolved = cls.model_validate(row["values"])
+        if encoded(resolved.model_dump(mode="json")) != encoded(row["values"]):
+            raise ValueError("Observation model values require coercion")
+        if row["bounds"] != cls.model_json_schema()["properties"]:
+            raise ValueError("Observation model bounds mismatch")
+        prefix = cls.model_config.get("env_prefix", "")
+        for name, source in row["sources"].items():
+            if (set(source) != {"variable", "source"}
+                    or source["variable"] != (prefix + name).upper()
+                    or source["source"] not in ("environment", "production_default")):
+                raise ValueError("Observation model provenance mismatch")
+    risks = observation["risk_limits"]
+    if set(risks) != {"solana", "binance"}:
+        raise ValueError("Observation risk markets mismatch")
+    for market, cls in (("solana", RiskLimits), ("binance", BinanceRiskLimits)):
+        if set(risks[market]) != set(asdict(cls())):
+            raise ValueError("Observation risk inventory mismatch")
+        cls(**risks[market])
+    costs = observation["costs"]
+    if set(costs) != set(MARKETS):
+        raise ValueError("Observation cost markets mismatch")
+    solana = costs["solana"]
+    if (set(solana) != {"fee_pct", "slippage_pct", "source"}
+            or solana["source"] != "resolved_Settings_instance"):
+        raise ValueError("Observation Solana costs provenance mismatch")
+    for name in ("fee_pct", "slippage_pct"):
+        value = solana[name]
+        if type(value) not in (int, float) or not 0 <= value < 100:
+            raise ValueError("Observation Solana costs out of bounds")
+    for market in ("spot", "futures"):
+        if set(costs[market]) != {"maker", "taker"}:
+            raise ValueError("Observation fee inventory mismatch")
+        for name, fee in costs[market].items():
+            variable = "BINANCE_" + market.upper() + "_" + name.upper() + "_RATE"
+            if (set(fee) != {"value", "variable", "source", "bounds"}
+                    or fee["variable"] != variable
+                    or fee["source"] not in ("environment", "production_default")
+                    or fee["bounds"] != {"minimum": 0, "maximum": .01}):
+                raise ValueError("Observation fee provenance/bounds mismatch")
+            if type(fee["value"]) not in (int, float) or not 0 <= fee["value"] <= .01:
+                raise ValueError("Observation fee out of bounds")
+    fingerprints = observation["implementation"]
+    if set(fingerprints) != set(MODULES):
+        raise ValueError("Observation implementation inventory mismatch")
+    for value in fingerprints.values():
+        if (not isinstance(value, str) or len(value) != 64
+                or any(c not in "0123456789abcdef" for c in value)):
+            raise ValueError("Observation implementation fingerprint invalid")
+    for market in MARKETS:
+        expected = {"strategy": "v1", "dispatch": "off", "data_status":
+                    "blocked_http_451" if market == "futures" else "public_data"}
+        if observation["markets"][market] != expected:
+            raise ValueError("Observation market status mismatch")
+    if observation["gaps"] != list(GAPS):
+        raise ValueError("Observation limitations must remain explicit")
+
+
 def migrate_observation(state, observation, at):
     """Append observation child versions; never reinterpret legacy baselines.
 
-    Pure value transform. Persist returned state through existing cycle storage
-    explicitly. Not called by capture_registry; runtime migration stays OFF.
+    Pure value transform, called by capture_registry on checkpoint writes.
+    Partial observations only: full-policy migration and runtime dispatch stay OFF.
     Historical snapshots are unknown, not reconstructed from today's defaults.
     """
     timestamp(at)
@@ -103,7 +172,7 @@ def migrate_observation(state, observation, at):
         if any(set(row.get(section, {})) != set(cls.model_fields)
                for section in ("values", "bounds", "sources")):
             raise ValueError("Observation settings field inventory mismatch")
-    encoded(observation)  # Reject non-finite and non-JSON payloads before appending.
+    validate_observation(observation)  # Reject malformed contents before appending.
     result = deepcopy(state)
     previous = result.get("policy_observations", {})
     if previous and set(previous) != set(MARKETS):
