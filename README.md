@@ -1,3 +1,49 @@
+## Build 4 part 6 — PARTIAL observation integrity, dispatch OFF
+
+PAPER ONLY. This browser-only increment does **not** finish Priority 1. Before the
+wired checkpoint migration appends any observation child, it now validates the
+captured settings values against production models, exact model bounds and source
+inventories, risk dataclass inventories/constraints, Solana cost bounds, Binance
+fee bounds/provenance, implementation fingerprint shape/inventory, all-market v1
+OFF status and explicit limitations. Invalid contents fail loudly before append;
+legacy history and champion pointers are not rewritten. Corrected the stale
+migration docstring: partial observation migration IS called on checkpoint writes.
+Fingerprints are syntax-checked, not authenticated provenance; valid-looking
+records are not a semantic completeness certificate.
+
+New offline regression cases damage these nested contents and check rejection
+without input mutation, nondefault environment append/idempotence, and checkpoint
+failure propagation. These are integrity tests, **not independent decision-path
+byte equivalence**. Existing Solana config-roundtrip fixtures remain same-evaluator,
+small-n, fixture-bounded and non-exhaustive. Environment values are observations at
+resolution time, not guaranteed decision-time or cycle-frozen values. No local
+shell/Python or local ruff/pytest was available; GitHub CI is the validator.
+
+Runtime decisions remain hardcoded. **Dispatch stays OFF** because complete named
+selection/entry/exit/sizing/cost policies, dynamic per-instrument exchange minimums,
+resolver-complete per-market snapshots and the independent all-veto/boundary
+Solana/Spot/Futures-limited corpus are still missing. Futures remains
+`blocked_http_451`. No persisted-champion dispatcher or production
+`ACT_DISPATCH_MODE=off` kill switch is wired; do not rely on that variable.
+`ACT_POLICY_DISPATCH=false` only controls the existing standalone prerequisite
+helper; true raises DISPATCH_BLOCKED and cannot enable dispatch. It is not a
+production kill switch. No activation credential is inferred from green integrity
+CI. Snapshot drift/pointer checks in the standalone resolver are not yet runtime
+per-market dispatch protection.
+
+Migration today is append-only **partial observation** capture on write. A later
+full-snapshot migration must retain event history and original v1 champion IDs,
+explicitly associate complete child snapshots with those IDs, verify every market
+through the full resolver, and only then wire fail-closed runtime resolution with
+independent CI proofs and a real kill switch. Never relabel partial observations
+as complete or silently fall back after a dispatch resolution failure.
+
+Deferred: complete semantic snapshots and full migration, independent all-market
+byte equivalence, runtime dispatch/kill switch; shadows, attribution/scoreboard,
+backtester, OOS and promotion. No risk-limit, scanner/TA, fill-model, exchange
+account/key/signed endpoint, live-execution, geo-block, Render/billing or HFTENGINE
+changes. No external code copied. No profitability or exhaustive-equivalence claim.
+
 ## Build 4 part 5 — partial persistence increment, dispatch OFF
 
 PAPER ONLY. Priority 1 is NOT complete. Checkpoint capture now calls the existing effective-observation and append-only migration helpers inside the cycle checkpoint path. Legacy identity/cost events remain an unchanged prefix; champion pointers stay at the same v1 IDs. Unchanged observations are idempotent; changed observations append children. Capture/validation errors propagate, not silently downgrade. These remain incomplete observations, NOT resolver-complete policy snapshots. No historical checkpoint is rewritten.
