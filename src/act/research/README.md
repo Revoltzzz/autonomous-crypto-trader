@@ -140,6 +140,17 @@ accounts/keys/signed endpoints, geo-block work, Render or billing changes.
 HFTENGINE was not accessed or modified and no external code was copied.
 CI (ruff + pytest) validates this increment; no local shell/Python runs claimed.
 
+
+## Build 4 part 8 — PARTIAL early-risk interpreter (PAPER ONLY)
+
+Browser-only increment; no local checkout, shell or Python execution.
+
+Delivered: standalone `act.research.early_risk.evaluate_early_risk` consumes a CapturedPolicy, parses the captured `act.risk.limits.check_trade` body with AST (no eval/exec), checks the ordered three supported guards and interprets their operands/operators and captured veto strings. It validates captured Solana fee_pct/slippage_pct as finite [0,100) inputs, requires dispatch off, and returns the complete RiskCheckResult mapping ONLY for early rejects. It does not call production decision functions. Unsupported cases raise UnsupportedPolicy, never acceptance or an invented partial decision.
+
+Synthetic offline corpus: Solana n=6 (leverage=2; leverage=1.0000001; missing stop; stop=entry; stop just above entry; leverage+missing-stop precedence). Three veto reasons: No leverage permitted; A stop-loss invalidation point is required; Long stop-loss must be below the quoted entry price. Tests compare all canonical RiskCheckResult bytes against unchanged production check_trade on the same proposal, with separate live Settings/RiskLimits/account objects on the production side and captured JSON on the interpreter side. A mismatch reports a unified byte-text diff and fails. Three additional tests cover unimplemented acceptance, guard drift rejection and captured reason mutation. CI is the validator; this text does not assert a local or CI pass.
+
+Deferred: full candidate/market-context strategy decisions; BUY/REJECT/WATCH outputs; sizing, entry/exit parameters; all remaining vetoes; cap exhaustion; exchange minimums; sizing variations; Spot n=0; Futures n=0 (still blocked_http_451/nontradable, no invented instruments). This is NOT the requested all-market corpus and does NOT establish full Solana equivalence. Only the three captured guards/early return messages above are interpreted; all other rule bodies, resolved models, risk limits, controls, instrument minimums, exit/fill/cost arithmetic are ignored, not claimed equivalent. Changes outside the supported source slice are not independently audited. Synthetic fixtures are not observed market evidence, and fixture equivalence is not live-data equivalence. Existing resolution-time/not-cycle-frozen, custom-config, caller-supplied Spot scope, coverage and unauthenticated fingerprint limitations remain. No runtime integration, persisted-champion dispatcher or ACT_DISPATCH_MODE switch is added. Dispatch remains OFF.
+
 ## Build 4 part 3: partial policy primitives (not activated)
 
 PAPER ONLY. This increment adds research/policy.py: canonical immutable policy
