@@ -59,7 +59,7 @@ def test_unimplemented_acceptance_fails_loudly():
 
 def test_source_guard_mutation_fails_closed():
     _, snapshot = capture()
-    policy = snapshot.policy()
+    policy = snapshot.policy
     row = policy["selection"]["named_production_rules"]["act.risk.limits"]["definitions"]
     key = "act.risk.limits.check_trade"
     row[key] = row[key].replace("proposal.leverage != 1", "proposal.leverage > 1")
@@ -70,7 +70,7 @@ def test_source_guard_mutation_fails_closed():
 
 def test_captured_reason_is_consumed():
     _, snapshot = capture()
-    policy = snapshot.policy()
+    policy = snapshot.policy
     row = policy["selection"]["named_production_rules"]["act.risk.limits"]["definitions"]
     key = "act.risk.limits.check_trade"
     row[key] = row[key].replace("No leverage permitted", "MUTATED veto")
