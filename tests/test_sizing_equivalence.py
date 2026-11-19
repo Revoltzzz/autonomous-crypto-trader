@@ -94,6 +94,8 @@ def test_sizing_bytes(monkeypatch, name, equity, entry, stop, fraction, fee, sli
 
 @pytest.mark.parametrize("old,new", [
     ("* 0.01", "* 0.02"),
+    ("size=size", "size=round(size, 2)"),
+    ("trade = TradeProposal", "size = round(size, 2)\n        trade = TradeProposal"),
     ("min(nominal_notional", "max(nominal_notional"),
     ("1 - 1e-10", "1 - 1e-9"),
     ("entry * (1 + slippage)", "entry * (1 - slippage)"),
