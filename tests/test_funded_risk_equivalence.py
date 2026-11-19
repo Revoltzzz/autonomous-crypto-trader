@@ -16,7 +16,7 @@ from act.risk.limits import RiskLimits, check_trade
 
 CASES = [
     ("tp_below", {"take_profit": 100}, 10000),
-    ("tp_slipped_equal", {"take_profit": 100.5}, 10000),
+    ("tp_slipped_equal", {"take_profit": 100 * (1 + 0.5 / 100)}, 10000),
     ("tp_below_edge", {"take_profit": 100.4999999}, 10000),
     ("cash_zero", {}, 0),
     ("cash_below_edge", {}, 100.7512499),
@@ -52,7 +52,7 @@ def test_funded_risk_bytes(name, changes, cash):
     assert left == right, f"DECISION_BYTE_DIVERGENCE {name}\n{diff}"
 
 
-@pytest.mark.parametrize("cash", [100.75125, 100.7512501, 10000])
+@pytest.mark.parametrize("cash", [100 * (1 + 0.5 / 100) * (1 + 0.25 / 100), 100.7512501, 10000])
 def test_funded_boundary_is_not_an_accept(cash):
     _, snapshot, proposal, account = inputs(cash=cash)
     with pytest.raises(UnsupportedPolicy, match="NOT implemented"):
