@@ -1,3 +1,16 @@
+## Build 4 part 10 — PARTIAL remaining Solana risk veto corpus (PAPER ONLY)
+
+Browser-only GitHub UI; no checkout/shell/Python or local test runs. CI is the validator.
+New isolated evaluate_remaining_risk consumes the captured per-trade-risk, daily-loss/projected-exposure and drawdown/projected-exposure guards, assignments, limits and formatted veto strings. Exact tail AST (including reasons and ordering) is pinned; mutations fail loudly. It delegates only to the isolated early/funded interpreters, never production decisions; production check_trade is unchanged. Earlier interpreters retain their original reason-consumption behavior.
+
+New synthetic Solana n=20 byte-comparison fixtures (17 zero-cost boundary/precedence cases plus 3 default-cost cases), plus an inclusive drawdown comparison safety case: 21 new comparisons; with prior n=14, Solana n=35. Spot n=0 (future scope remains caller-supplied instrument values only); Futures n=0, blocked_http_451/nontradable. Full canonical RiskCheckResult bytes compared with unified diff on mismatch. Boundaries use exactly representable zero-cost thresholds and math.nextafter, not approximate decimal thresholds. Early -> funded -> per-trade -> daily -> drawdown precedence is exercised. Safety covers unsupported acceptance, tail guard/reason mutations, missing/nonfinite input, wrong market and dispatch on.
+
+Capture inventory retains the full check_trade definition and resolved Solana RiskLimits; no missing tail-body capture was found by source inspection. This is risk arithmetic, NOT sizing. Invalid-cost veto, complete accepts, sizing/caps/exchange minimums, strategy BUY/WATCH/exit/full-market corpus remain unsupported/deferred. Unsupported stages raise loudly, never acceptance. No runtime integration; dispatch OFF, no activation path or authorization. Synthetic fixtures are not observed market evidence; fixture equality is not live-data equivalence. Resolution-time/not-cycle-frozen and custom-configuration limitations remain; this corpus is not exhaustive.
+
+PAPER ONLY: no production risk/scanner/TA/fill changes, real orders, exchange accounts, API keys, signed endpoints, geo-block, Render/billing, or HFTENGINE changes; no external code copied.
+
+---
+
 ## Build 4 part 9 — PARTIAL funded-risk veto corpus (PAPER ONLY)
 
 Browser-only GitHub UI increment; no checkout, shell, Python or local test runs.
