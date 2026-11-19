@@ -30,7 +30,7 @@ def evaluate_early_risk(snapshot, proposal):
     """
     if snapshot.market != "solana":
         raise UnsupportedPolicy("Only Solana early-risk subset supported; dispatch OFF")
-    policy = snapshot.policy()
+    policy = snapshot.policy
     selection = policy["selection"]
     if selection["dispatch"] != "off":
         raise UnsupportedPolicy("Dispatch must remain OFF")
