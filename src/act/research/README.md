@@ -1,3 +1,42 @@
+## Build 4 part 9 — PARTIAL funded-risk veto corpus (PAPER ONLY)
+
+Browser-only GitHub UI increment; no checkout, shell, Python or local test runs.
+CI (ruff + pytest) is the validator, not an assumed pass.
+
+New isolated evaluate_funded_risk extends the early interpreter through captured
+slipped entry, take-profit guard, slipped stop, fee-inclusive cost, net stop
+proceeds, cost-minus-proceeds risk, and cash guard. These are risk arithmetic,
+NOT position sizing. Exact supported AST formula/guard order is pinned; values,
+operators and veto reason strings are interpreted from the captured body. Costs
+come from the snapshot; proposal/account inputs are caller supplied. No production
+decision evaluator is called by the interpreter. The original early evaluator
+and all production behavior remain unchanged.
+
+New veto reasons: "Take profit must exceed slipped entry" and
+"Insufficient cash; borrowing and leverage forbidden". Complete RiskCheckResult
+canonical bytes are compared against unchanged check_trade with unified diffs.
+New synthetic Solana n=8: TP below/equal/just-below slipped entry, cash zero/just
+below funding edge, TP-before-cash and leverage-before-TP precedence, and TP just
+above edge reaching cash rejection. Together with part8 n=6, Solana n=14 dual-path
+reject fixtures; Spot n=0; Futures n=0, blocked_http_451/nontradable. Additional
+safety tests: three funded boundary/accept fallthroughs fail loudly, two formula/
+guard mutations fail closed, and captured cash reason mutation is consumed.
+
+Deferred: per-trade risk, daily loss/projected exposure and drawdown/projected
+exposure vetoes after cash; invalid-cost veto remains unsupported (loud failure).
+No sizing equivalence, cap exhaustion, minimum-quantity/exchange minimum edges,
+notional/concentration/position-count/stale-data paths outside this check_trade
+prefix, BUY/WATCH, full accepts, downstream strategy or exits. Passing the cash
+guard raises UnsupportedPolicy, never acceptance. Source outside this prefix
+is not audited. Synthetic fixtures are not observed market evidence; fixture
+byte equality is not live-data equivalence. Resolution-time not cycle-frozen,
+custom-config coverage, caller-supplied Spot instruments and unauthenticated
+fingerprint limits remain. Dispatch stays OFF, no activation path. No production
+risk/scanner/TA/fill changes, exchange accounts/keys/signed endpoints/orders,
+geo-block, Render/billing or HFTENGINE changes; no external code copied.
+
+Earlier part8 sections below describe that increment, not part9 coverage.
+
 ## Build 4 part 7 — standalone source-backed capture; dispatch OFF
 
 PAPER ONLY. `act.research.semantic_capture.capture_policy` now captures qualified production rule bodies, named assignments and guards (not only hashes), effective settings/bounds/sources including ConcentrationSettings, fees and Binance control values, and explicitly scoped caller-supplied dynamic instrument minimums. No HTTP or checkpoint/runtime behavior was added.
