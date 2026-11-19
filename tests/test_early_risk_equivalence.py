@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from act.config import Settings
+from act.config.settings import Settings
 from act.domain.models import AccountState, TradeProposal
 from act.research.dispatch_safety import decision_bytes
 from act.research.early_risk import UnsupportedPolicy, evaluate_early_risk
