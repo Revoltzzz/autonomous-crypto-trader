@@ -69,6 +69,14 @@ def evaluate_sizing(snapshot, proposal, account):
                 for i, stmt in enumerate(node.body):
                     if (isinstance(stmt, ast.Assign)
                             and ast.unparse(stmt.targets[0]) == "risk_budget"):
+                        following = node.body[i + len(FIELDS)]
+                        if (not isinstance(following, ast.Assign)
+                                or ast.unparse(following.targets[0]) != "trade"
+                                or not isinstance(following.value, ast.Call)
+                                or ast.unparse(following.value.func) != "TradeProposal"
+                                or [ast.unparse(k.value) for k in following.value.keywords
+                                    if k.arg == "size"] != ["size"]):
+                            raise UnsupportedPolicy("Captured sizing boundary/rounding drift")
                         regions.append(node.body[i:i + len(FIELDS)])
         if len(regions) != 1:
             raise UnsupportedPolicy("CAPTURE_GAP sizing region missing/ambiguous")
